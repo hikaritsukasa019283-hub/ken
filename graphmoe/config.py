@@ -42,6 +42,7 @@ class GraphMoEConfig:
     bits_embed: int = 4
     group_size: int = 64               # 그룹 양자화 단위; scale 은 fp16
     qat: bool = True                   # False 면 fake-quant 비활성 (FP 학습/디버그)
+    grad_ckpt: bool = False            # 블록 단위 activation checkpointing (학습 메모리 절약)
 
     # --- routing ---
     aux_loss_coef: float = 0.01        # load-balance loss 계수 (tier 별 합산)
@@ -72,6 +73,22 @@ class GraphMoEConfig:
     @property
     def n_physical_factors(self) -> int:
         return self.n_domain + self.n_op + self.n_ctrl     # 20
+
+
+def mini_config(**kw) -> GraphMoEConfig:
+    """파일럿 학습용 소형 (~수백M). 구조·비율은 7B 와 동일, 규모만 축소."""
+    base = dict(
+        vocab_size=32000, n_layers=16, d_model=640, n_heads=10, n_kv_heads=2, head_dim=64,
+        max_seq_len=2048, ffn_dim=1024, r_domain=128, r_op=96, r_ctrl=48,
+        group_size=64, ffn_edge_layers=2,
+    )
+    base.update(kw)
+    return GraphMoEConfig(**base)
+
+
+def get_preset(name: str, **kw) -> GraphMoEConfig:
+    presets = {"7b": GraphMoEConfig, "mini": mini_config, "tiny": lambda **k: tiny_config(**k)}
+    return presets[name](**kw)
 
 
 def tiny_config(**kw) -> GraphMoEConfig:

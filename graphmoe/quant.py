@@ -4,20 +4,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def fake_quant_weight(w: torch.Tensor, bits: int, group: int) -> torch.Tensor:
-    """마지막 차원을 group 단위로 묶은 대칭 mid-rise 양자화 + STE.
+def quantize_codes(w: torch.Tensor, bits: int, group: int):
+    """(codes uint-range float [..., ng, g], scale [..., ng, 1], group 크기) — 학습/export 공통 경로.
 
-    levels = {-(h-.5), ..., (h-.5)}*scale,  h = 2**(bits-1)  (2-bit => 4 levels, 0 없음)
+    levels = (code - h + .5) * scale,  h = 2**(bits-1)  (2-bit => 4 levels, 0 없음)
+    scale 은 fp16 으로 반올림 => QAT 출력 == 배포 dequant 출력.
     """
     shape = w.shape
     g = group if shape[-1] % group == 0 else shape[-1]
     wg = w.reshape(*shape[:-1], shape[-1] // g, g)
     half = 2 ** (bits - 1)
     amax = wg.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8)
-    scale = amax / (half - 0.5)
-    q = (torch.floor(wg / scale).clamp(-half, half - 1) + 0.5) * scale
-    q = wg + (q - wg).detach()                      # STE
-    return q.reshape(shape)
+    scale = (amax / (half - 0.5)).half().to(w.dtype).clamp_min(1e-8)
+    codes = torch.floor(wg / scale).clamp(-half, half - 1) + half       # 0 .. 2**bits-1
+    return codes, scale, g
+
+
+def dequantize_codes(codes, scale, bits, shape):
+    half = 2 ** (bits - 1)
+    return ((codes - half + 0.5) * scale).reshape(shape)
+
+
+def fake_quant_weight(w: torch.Tensor, bits: int, group: int) -> torch.Tensor:
+    """마지막 차원을 group 단위로 묶은 대칭 mid-rise 양자화 + STE."""
+    codes, scale, _ = quantize_codes(w, bits, group)
+    q = dequantize_codes(codes, scale, bits, w.shape)
+    return w + (q - w).detach()                      # STE
 
 
 def fake_quant_int8_lastdim(x: torch.Tensor):

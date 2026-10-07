@@ -45,16 +45,19 @@ class LatentFactor(nn.Module):
 def _dispatch(experts, idx, inp, r_out, d):
     """top-1 dispatch: idx[n] 번 expert 로 토큰을 보내고 (latent, out) 을 원래 순서로 되돌린다."""
     N = inp.shape[0]
-    lat = inp.new_zeros(N, r_out)
-    out = inp.new_zeros(N, d)
-    for e, m in enumerate(experts):
-        sel = (idx == e).nonzero(as_tuple=True)[0]
-        if sel.numel() == 0:
-            continue
-        l, o = m(inp[sel])
-        lat = lat.index_copy(0, sel, l.to(lat.dtype))
-        out = out.index_copy(0, sel, o.to(out.dtype))
-    return lat, out
+    if N == 0:
+        return inp.new_zeros(0, r_out), inp.new_zeros(0, d)
+    order = idx.argsort(stable=True)                       # expert 별로 연속 배치 -> expert 당 matmul 1회
+    counts = torch.bincount(idx, minlength=len(experts)).tolist()
+    lats, outs = [], []
+    for m, chunk in zip(experts, inp[order].split(counts)):
+        if chunk.shape[0]:
+            l, o = m(chunk)
+            lats.append(l)
+            outs.append(o)
+    inv = torch.empty_like(order)
+    inv[order] = torch.arange(N, device=order.device)      # 원래 토큰 순서로 복원
+    return torch.cat(lats)[inv], torch.cat(outs)[inv]
 
 
 def _balance_loss(probs, idx, n):

@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .attention import GQAttention, Int8KVCache, KVContext, rope_cache
 from .config import GraphMoEConfig
@@ -71,7 +72,10 @@ class GraphMoE(nn.Module):
         kv = KVContext(caches, past_len)
         aux_total, routes = x.new_zeros(()), []
         for blk in self.blocks:
-            x, aux, route = blk(x, rope, kv)
+            if self.cfg.grad_ckpt and self.training and caches is None:
+                x, aux, route = checkpoint(blk, x, rope, kv, use_reentrant=False)
+            else:
+                x, aux, route = blk(x, rope, kv)
             aux_total = aux_total + aux
             routes.append(route)
         x = self.norm(x)
