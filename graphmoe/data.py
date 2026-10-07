@@ -3,8 +3,9 @@
 CLI (로컬 텍스트):
   python -m graphmoe.data --tokenizer byte|hf:<name_or_path> --out data/train.bin  file1.txt file2.txt ...
 CLI (HuggingFace 데이터셋, 스트리밍 — 전체를 내려받지 않고 RAM/디스크 최소로 필요한 만큼만):
-  python -m graphmoe.data --tokenizer hf:<tok> --hf-dataset <org/name> [--hf-config c] --split train \
-        --text-field text --max-tokens 200000000 --out data/train.bin
+  python -m graphmoe.data --tokenizer hf:<tok> --hf-dataset <org/name> [--hf-config c] [--hf-data-dir d] \
+        --split train --text-field text --max-tokens 200000000 --out data/train.bin
+  예) Anthropic/hh-rlhf:  --hf-dataset Anthropic/hh-rlhf --hf-data-dir helpful-base --text-field chosen
 """
 import argparse
 import json
@@ -47,10 +48,12 @@ def get_tokenizer(spec: str):
     return ByteTokenizer() if spec == "byte" else HFTokenizer(spec.removeprefix("hf:"))
 
 
-def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", config: str = None):
-    """HF 데이터셋을 streaming 으로 순회하며 text 만 yield (datasets lazy import)."""
+def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", config: str = None,
+                  data_dir: str = None):
+    """HF 데이터셋을 streaming 으로 순회하며 text_field 만 yield (datasets lazy import).
+    data_dir: 하위 폴더형 서브셋 (예: Anthropic/hh-rlhf 의 helpful-base)."""
     from datasets import load_dataset
-    ds = load_dataset(dataset, config, split=split, streaming=True)
+    ds = load_dataset(dataset, config, data_dir=data_dir, split=split, streaming=True)
     for row in ds:
         t = row.get(text_field)
         if t:
@@ -110,14 +113,14 @@ if __name__ == "__main__":
     ap.add_argument("--tokenizer", default="byte")
     ap.add_argument("--out", required=True)
     ap.add_argument("files", nargs="*")
-    ap.add_argument("--hf-dataset"); ap.add_argument("--hf-config")
+    ap.add_argument("--hf-dataset"); ap.add_argument("--hf-config"); ap.add_argument("--hf-data-dir")
     ap.add_argument("--split", default="train"); ap.add_argument("--text-field", default="text")
     ap.add_argument("--max-tokens", type=int)
     a = ap.parse_args()
     if bool(a.hf_dataset) == bool(a.files):
         ap.error("텍스트 파일들 또는 --hf-dataset 중 하나만 지정")
     tok = get_tokenizer(a.tokenizer)
-    docs = (iter_hf_texts(a.hf_dataset, a.split, a.text_field, a.hf_config) if a.hf_dataset
+    docs = (iter_hf_texts(a.hf_dataset, a.split, a.text_field, a.hf_config, a.hf_data_dir) if a.hf_dataset
             else (open(p, encoding="utf-8").read() for p in a.files))
     n = write_bin(docs, tok, a.out, a.max_tokens)
     print(f"wrote {n:,} tokens -> {a.out}")

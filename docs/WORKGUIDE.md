@@ -61,7 +61,7 @@ python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin 
 | ID | 내용 | 현재 가정 |
 |---|---|---|
 | ~~D1~~ ✅ | **해결(rank 확대)**: 512/384/192 → 1728/1280/640. 계산값 총 **6.76B**(목표 6.8B, -0.6%) / 활성 **2.32B**(목표 2.4B, -3%). 원 스펙 rank 로는 총 3.03B/활성 1.83B 였음 | 적용 완료 |
-| D2 | 데이터: **HuggingFace 공개 데이터셋 사용**(사용자 언급: HF / Apple 쪽 공개 DB — 정확한 데이터셋 ID 미정). 토크나이저·vocab 미정 | `data.py --hf-dataset` 스트리밍 지원 완료. vocab 64000 은 가정값 |
+| D2 | 데이터: 사용자 선택 **`Anthropic/hh-rlhf`** (HF). ⚠ 이건 *선호(preference) 대화 데이터*(`chosen`/`rejected` 필드, `data_dir` 로 서브셋 분리 — 제 기억 기준, 이 환경은 huggingface.co 차단이라 **미검증**)라 사전학습 코퍼스로는 규모가 작다 → 파이프라인 검증·SFT/선호 단계용. 사전학습용 대규모 코퍼스는 별도 필요. 토크나이저/vocab 미정 | `data.py --hf-dataset Anthropic/hh-rlhf --hf-data-dir helpful-base --text-field chosen` 지원. vocab 64000 은 가정값 |
 | ~~D3~~ ✅ | **해결**: 사용자 PC RAM 이 작아 *작을수록 좋음*. 4.3~4.8GB 는 목표가 아니라 **상한**으로 해석. 현 계산값 ≈2.2GB (8K ctx) 로 상한 이내 → 추가 조정 불필요. 단 RAM 을 더 줄이고 싶으면 ctx 축소/KV 비트 하향 가능 | 상한 해석 적용 |
 | D4 | "Shared SwiGLU" = 모든 레이어에 각각 있는 항상-활성 FFN (레이어 간 가중치 공유 아님) | 레이어별 독립 |
 | D5 | "5:3 KV-sharing" = 8-layer 블록당 5 owner : 3 sharer | 20 owner / 12 sharer |
@@ -94,6 +94,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 설명은 **결론 먼저, 근거(수치·테스트·로그)** 순서로 보고한다.
 
 ## 8. 알려진 제약 / 발견 사항 (누적)
+- **네트워크**: 클라우드 세션 환경이 `huggingface.co` 를 차단(프록시 403)해서 HF 데이터/토크나이저 실다운로드는 아직 미검증. 환경 설정의 Network access 에서 해당 호스트 허용 필요. 로컬 PC 에서는 영향 없음.
 - **학습 메모리 ≠ 추론 메모리**: 추론 RAM 은 2.2GB 지만, 6.76B 학습은 파라미터×(fp32 가중치 4 + grad 4 + Adam 8) = 16B/param ≈ **108GB + activation** 이 필요하다. 사용자 로컬 PC 에서 7b 학습은 불가 → 로컬은 `mini`(0.11B ≈ 1.8GB + activation) 로 파이프라인 검증, 7b 는 클라우드 GPU(다중) 필요 (T6).
 - 풀사이즈 7B 는 CPU 에서 인스턴스화하지 말 것 (`torch.device("meta")` 로 구조만 확인). 실제 forward 검증은 tiny/mini.
 - STE 형태 `w + (q-w).detach()` 는 값이 q 와 ulp 단위로 다를 수 있다 (테스트에서 round 후 비교).

@@ -95,14 +95,16 @@ def test_hf_streaming_and_max_tokens(tmp_path, monkeypatch):
     from graphmoe.data import iter_hf_texts
     calls = {}
 
-    def fake_load(name, config, split, streaming):
-        calls.update(name=name, split=split, streaming=streaming)
+    def fake_load(name, config, data_dir=None, split=None, streaming=None):
+        calls.update(name=name, split=split, streaming=streaming, data_dir=data_dir)
         return iter([{"text": "abc " * 50}, {"text": ""}, {"other": "x"}] + [{"text": "hello " * 50}] * 100)
 
     monkeypatch.setitem(sys.modules, "datasets", types.SimpleNamespace(load_dataset=fake_load))
     texts = list(iter_hf_texts("org/ds", "train", "text"))
-    assert calls == {"name": "org/ds", "split": "train", "streaming": True}
+    assert calls == {"name": "org/ds", "split": "train", "streaming": True, "data_dir": None}
     assert len(texts) == 101                              # 빈 text / 필드 없는 행은 건너뜀
     p = str(tmp_path / "hf.bin")
     n = write_bin(iter_hf_texts("org/ds"), ByteTokenizer(), p, max_tokens=1000)
     assert 1000 <= n < 1000 + 400                         # 문서 단위로 끊으므로 약간 초과 가능
+    list(iter_hf_texts("Anthropic/hh-rlhf", "train", "chosen", data_dir="helpful-base"))
+    assert calls["data_dir"] == "helpful-base" and calls["name"] == "Anthropic/hh-rlhf"
