@@ -27,6 +27,7 @@ graphmoe/
   budget.py       모델 생성 없이 파라미터/활성/RAM 계산 (스펙 대비 점검)   python -m graphmoe.budget
   packing.py      2/3/4-bit 실제 비트패킹, export_packed / load_packed (추론 커널의 참조 구현)
   data.py         토크나이저 인터페이스(byte / HF), .bin 생성(로컬/HF 스트리밍), BinSampler, **MixSampler(비율 혼합)**, 합성데이터
+  build.py        데이터 빌더: 품질 필터 + 정확 중복 제거 + 해시 기반 train/val 분리 + 재개(바이트 동일)
   tokenizer.py    한국어+수학 혼합 byte-level BPE 학습/로드/점검 (`file:<json>` 로 data.py 와 연결)
   diagnostics.py  route_stats: tier 별 엔트로피·dead expert·ctrl on-rate·사용 경로 수
   train.py        AdamW + warmup/cosine + accum + bf16 + clip + ckpt/resume + 로깅
@@ -57,13 +58,17 @@ python -m graphmoe.tokenizer train --out tok/ko_math.json --vocab-size 64000 --t
        --src hf=HuggingFaceFW/fineweb-2,config=kor_Hang,field=text,weight=0.7 \
        --src hf=HuggingFaceTB/finemath,config=finemath-4plus,field=text,weight=0.25 --src file=extra.txt,weight=0.05
 #   -> tok/ko_math.json.report.json 의 padded_vocab_size 를 cfg.vocab_size 로, 이후 --tokenizer file:tok/ko_math.json
+# 데이터 빌드 (소스별로 1회씩: train/val 자동 분리, 중복 제거, 품질 필터, --resume 로 끊겨도 이어받기)
+python -m graphmoe.build --tokenizer file:tok/ko_math.json --out data/ko --hf-dataset HuggingFaceFW/fineweb-2 \
+       --hf-config kor_Hang --text-field text --max-tokens 1000000000 --val-frac 0.005 --val-tokens 2000000 --min-hangul 0.3 --resume
+#   -> data/ko.train.bin, data/ko.val.bin, data/ko.stats.json (필터/중복 통계). 수학 소스는 --min-hangul 없이 따로 빌드
 # 실데이터
 python -m graphmoe.data --tokenizer hf:<name> --out data/train.bin corpus1.txt corpus2.txt
 python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin --seq-len 1024 \
        --batch 8 --accum 4 --bf16 --grad-ckpt --steps 20000 --save-every 1000 --eval-every 500 --out runs/mini0
 # 혼합 학습 (경로=가중치, 쉼표 구분; Windows 경로의 ':' 때문에 '=' 사용). log.jsonl 의 "mix" 로 실제 비율 확인
-python -m graphmoe.train --preset mini --mix "data/ko.bin=0.7,data/math.bin=0.25,data/en.bin=0.05" \
-       --val-mix "data/ko_val.bin=0.7,data/math_val.bin=0.25,data/en_val.bin=0.05" --seq-len 1024 --out runs/mix0
+python -m graphmoe.train --preset mini --mix "data/ko.train.bin=0.7,data/math.train.bin=0.25,data/en.train.bin=0.05" \
+       --val-mix "data/ko.val.bin=0.7,data/math.val.bin=0.25,data/en.val.bin=0.05" --seq-len 1024 --out runs/mix0
 ```
 출력 `runs/<name>/log.jsonl` 의 `*_dead`(죽은 expert), `*_entropy`(0~1, 1=균등), `paths_used` 를 반드시 확인.
 
@@ -88,7 +93,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 | T11 | **토크나이저 학습**: 한국어+수학(LaTeX/기호) 혼합 샘플로 BPE/Unigram 학습, vocab 을 cfg.vocab_size 와 일치시킴 | - | 학습 스크립트 + 한국어/수학 텍스트의 토큰/문자 비율 리포트, `HFTokenizer` 로 로드 |
 | T12 | 한국어 수학 SFT 후보 3종의 라이선스·약관 확인(GPT-4o 합성 데이터 약관 포함) 후 후반 단계 혼합 | - | 라이선스 표 + 사용 가능 여부 결정 기록 |
 | T13 | 혼합 비율 파일럿 비교(mini): ko:math 비율별 val ppl(한국어)·수학 val loss 곡선 | T1,T11 | 비율별 로그 + 권장 비율 |
-| T14 | 데이터 빌더 보강: 소스별 train/val 분리 빌드(홀드아웃), 중복·품질 필터, 다운로드 재개 | T1 | `data.py` 에서 val bin 이 train 과 겹치지 않음을 테스트 |
+| T14 | ✅ **완료**: `build.py` (train/val 내용해시 분리·겹침 0, 정확 중복 제거, 가벼운 품질 필터, val 토큰 상한, --resume 바이트 동일). **남은 일**: 유사(near) 중복 제거(MinHash 등), 필터 임계값을 실데이터 통계로 튜닝 | - | `test_build.py` 6개 통과 |
 | T2 | ✅ 규모(D1)·RAM(D3) 확정 완료 (6.76B / 2.32B / 2.2GB) | - | `budget.py` + 테스트 통과 |
 | T3 | **QAT 스케줄**: FP(qat=False) 워밍업 → 4→3→2bit 점진 하향. 현재는 `cfg.qat` on/off 만 있음 | - | 스케줄 구현 + mini 에서 bit 하향 시 loss 급등 없음 로그 |
 | T4 | 라우터 안정화: z-loss, router 노이즈, aux 계수 튜닝, ctrl 게이트 임계 | - | mini 학습에서 `*_dead`=0, entropy>0.8 유지 |
@@ -108,6 +113,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 설명은 **결론 먼저, 근거(수치·테스트·로그)** 순서로 보고한다.
 
 ## 8. 알려진 제약 / 발견 사항 (누적)
+- **데이터 빌더**: 중복 제거는 *정확 일치*(공백 정규화 후 해시)만 한다 → 유사 중복·보일러플레이트는 train/val 사이에 남아 검증 손실이 낙관적일 수 있음. 해시 집합은 메모리에 올라감(문서당 수십 바이트) → RAM 이 부족하면 `--no-dedup`. 재개 시 HF 는 이미 처리한 문서 수만큼 *다시 스트리밍*(토큰화는 안 함, 네트워크만 소모). 품질 필터 임계값은 일반 휴리스틱이며 **실데이터로 튜닝 안 됨**(`stats.json` 의 drop 비율을 보고 조정). `--min-hangul` 은 한국어 소스에만.
 - **토크나이저**: NFC 정규화를 하므로 자모 분리형 입력은 decode 시 음절형으로 돌아온다(무손실은 NFC 입력 기준). 학습 코퍼스 소스가 먼저 고갈되면 그 소스는 예산보다 적게 쓰이고 나머지가 계속 채운다(비율이 약간 달라짐 → `report.json.used_chars` 확인). `--src` 값에 쉼표/`=` 가 든 경로는 불가. 모델 `vocab_size` 는 토크나이저 vocab 이상이어야 하며 64 배수 권장(`padded_vocab`).
 - **네트워크**: 클라우드 세션 환경이 `huggingface.co` 를 차단(프록시 403)해서 HF 데이터/토크나이저 실다운로드는 아직 미검증. 환경 설정의 Network access 에서 해당 호스트 허용 필요. 로컬 PC 에서는 영향 없음.
 - **학습 메모리 ≠ 추론 메모리**: 추론 RAM 은 2.2GB 지만, 6.76B 학습은 파라미터×(fp32 가중치 4 + grad 4 + Adam 8) = 16B/param ≈ **108GB + activation** 이 필요하다. 사용자 로컬 PC 에서 7b 학습은 불가 → 로컬은 `mini`(0.11B ≈ 1.8GB + activation) 로 파이프라인 검증, 7b 는 클라우드 GPU(다중) 필요 (T6).

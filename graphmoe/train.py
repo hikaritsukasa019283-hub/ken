@@ -90,6 +90,9 @@ def train(a) -> dict:
         val_s = BinSampler(a.val or a.data, a.seq_len, a.seed + 1)
     assert train_s.vocab_size <= cfg.vocab_size, "데이터 vocab > 모델 vocab"
 
+    if not (a.val or a.val_mix):
+        print("경고: --val/--val-mix 없음 -> 학습 데이터에서 검증을 뽑으므로 과적합을 감지할 수 없음 "
+              "(graphmoe.build 로 만든 *.val.bin 사용 권장)")
     model = GraphMoE(cfg).to(device).train()
     opt = torch.optim.AdamW(build_param_groups(model, a.wd), lr=a.lr, betas=(0.9, 0.95), eps=1e-8)
     step = 0
