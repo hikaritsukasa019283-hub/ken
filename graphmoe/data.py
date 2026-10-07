@@ -1,7 +1,7 @@
 """토크나이저 인터페이스 + 토큰 .bin(memmap) 생성/샘플링.
 
 CLI (로컬 텍스트):
-  python -m graphmoe.data --tokenizer byte|hf:<name_or_path> --out data/train.bin  file1.txt file2.txt ...
+  python -m graphmoe.data --tokenizer byte|file:<tok.json>|hf:<name_or_path> --out data/train.bin  file1.txt file2.txt ...
 CLI (HuggingFace 데이터셋, 스트리밍 — 전체를 내려받지 않고 RAM/디스크 최소로 필요한 만큼만):
   python -m graphmoe.data --tokenizer hf:<tok> --hf-dataset <org/name> [--hf-config c] [--hf-data-dir d] \
         --split train --text-field text --max-tokens 200000000 --out data/train.bin
@@ -45,7 +45,13 @@ class HFTokenizer:
 
 
 def get_tokenizer(spec: str):
-    return ByteTokenizer() if spec == "byte" else HFTokenizer(spec.removeprefix("hf:"))
+    """'byte' | 'file:<tokenizer.json>' (graphmoe.tokenizer 로 학습한 것) | 'hf:<name_or_path>'"""
+    if spec == "byte":
+        return ByteTokenizer()
+    if spec.startswith("file:"):
+        from .tokenizer import TrainedTokenizer
+        return TrainedTokenizer(spec.removeprefix("file:"))
+    return HFTokenizer(spec.removeprefix("hf:"))
 
 
 def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", config: str = None,
