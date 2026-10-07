@@ -151,8 +151,8 @@ def parse(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--preset", default="tiny", choices=["tiny", "mini", "7b"])
     p.add_argument("--data"); p.add_argument("--val"); p.add_argument("--synthetic", action="store_true")
-    p.add_argument("--mix", help="'a.bin=0.7,b.bin=0.25,...' 혼합 학습 데이터 (--data 대신)")
-    p.add_argument("--val-mix", help="검증용 혼합 (미지정 시 --val, 그것도 없으면 --mix 재사용)")
+    p.add_argument("--mix", nargs="+", help="'a.bin=0.7,b.bin=0.25' 혼합 학습 데이터 (--data 대신). 공백 구분도 가능")
+    p.add_argument("--val-mix", nargs="+", help="검증용 혼합 (미지정 시 --val, 그것도 없으면 --mix 재사용)")
     p.add_argument("--out", default="runs/default")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--batch", type=int, default=8)
@@ -172,7 +172,11 @@ def parse(argv=None):
     p.add_argument("--eval-iters", type=int, default=10)
     p.add_argument("--save-every", type=int, default=0)
     p.add_argument("--resume", action="store_true")
-    return p.parse_args(argv)
+    a = p.parse_args(argv)
+    for k in ("mix", "val_mix"):                     # PowerShell 이 쉼표 인자를 쪼개도 합쳐서 처리
+        v = getattr(a, k)
+        setattr(a, k, ",".join(v) if v else None)
+    return a
 
 
 if __name__ == "__main__":

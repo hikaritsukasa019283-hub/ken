@@ -8,9 +8,9 @@
 
 CLI:
   python -m graphmoe.tokenizer train --out tok/ko_math.json --vocab-size 64000 --total-chars 100000000 \\
-      --src hf=HuggingFaceFW/fineweb-2,config=kor_Hang,field=text,weight=0.7 \\
-      --src hf=HuggingFaceTB/finemath,config=finemath-4plus,field=text,weight=0.25 \\
-      --src file=extra_en.txt,weight=0.05
+      --src hf=HuggingFaceFW/fineweb-2 config=kor_Hang field=text weight=0.7 \\
+      --src hf=HuggingFaceTB/finemath config=finemath-4plus field=text weight=0.25 \\
+      --src file=extra_en.txt weight=0.05
 """
 import argparse
 import json
@@ -135,10 +135,11 @@ def main(argv=None):
     t.add_argument("--total-chars", type=int, default=100_000_000,
                    help="학습에 쓸 총 문자 수. BPE 학습은 RAM 을 많이 쓰므로 PC 사양에 맞게 (기본 1억)")
     t.add_argument("--holdout", type=int, default=200)
-    t.add_argument("--src", action="append", required=True,
-                   help="'hf=org/name,config=..,field=text,data_dir=..,split=train,weight=0.7' 또는 'file=path.txt,weight=0.1'")
+    t.add_argument("--src", action="append", nargs="+", required=True, metavar="K=V",
+                   help="소스 1개 = key=value 들. 쉼표로 잇거나 공백으로 나눠 써도 됨(PowerShell 이 쉼표 인자를 쪼개도 동작). "
+                        "예) --src hf=org/name config=kor_Hang field=text weight=0.7  /  --src file=path.txt weight=0.1")
     a = ap.parse_args(argv)
-    sources = [_parse_src(s) for s in a.src]
+    sources = [_parse_src(",".join(toks)) for toks in a.src]
     gen, held, st = mix_corpus(sources, a.total_chars, a.holdout)
     tok = train_tokenizer(gen, a.vocab_size, a.out)
     rep = report(tok, held)

@@ -1,3 +1,4 @@
+import os
 import json
 import random
 
@@ -84,3 +85,27 @@ def test_get_tokenizer_bare_json_and_clear_errors(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(AutoTokenizer=Boom))
     with pytest.raises(RuntimeError, match="file:"):                      # HF 실패 시 file: 안내 포함
         get_tokenizer("hf:some/missing-model")
+
+
+def test_cli_src_accepts_space_separated_powershell_style(tmp_path):
+    from graphmoe.tokenizer import main
+    ko, ma = tmp_path / "ko.txt", tmp_path / "math.txt"
+    ko.write_text("\n".join(_docs(300, 0, KO)), encoding="utf-8")
+    ma.write_text("\n".join(_docs(300, 1, MATH)), encoding="utf-8")
+    out = str(tmp_path / "tok" / "t.json")
+    # PowerShell 이 'file=a,weight=0.7' 을 ['file=a','weight=0.7'] 로 쪼갠 상황과 같은 인자 모양
+    main(["train", "--out", out, "--vocab-size", "500", "--total-chars", "30000", "--holdout", "5",
+          "--src", f"file={ko}", "weight=0.7", "--src", f"file={ma}", "weight=0.3"])
+    assert os.path.exists(out) and os.path.exists(out + ".report.json")
+    out2 = str(tmp_path / "tok" / "t2.json")                                # 기존 쉼표 형식도 계속 동작
+    main(["train", "--out", out2, "--vocab-size", "500", "--total-chars", "30000", "--holdout", "5",
+          "--src", f"file={ko},weight=0.7", "--src", f"file={ma},weight=0.3"])
+    assert os.path.exists(out2)
+
+
+def test_train_mix_space_separated(tmp_path):
+    from graphmoe.train import parse
+    a = parse(["--preset", "tiny", "--mix", "a.bin=0.7", "b.bin=0.3", "--steps", "1"])
+    assert a.mix == "a.bin=0.7,b.bin=0.3"
+    assert parse(["--preset", "tiny", "--mix", "a.bin=0.7,b.bin=0.3"]).mix == "a.bin=0.7,b.bin=0.3"
+    assert parse(["--preset", "tiny"]).mix is None
