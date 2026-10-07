@@ -159,7 +159,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--tokenizer", required=True)
     ap.add_argument("--out", required=True, help="출력 접두사 (예: data/ko -> data/ko.train.bin, data/ko.val.bin)")
-    ap.add_argument("files", nargs="*", help="로컬 텍스트 파일 (기본: 파일 1개 = 문서 1개)")
+    ap.add_argument("files", nargs="*", help="로컬 파일: .parquet/.jsonl[.gz] (--text-field 컬럼) 또는 .txt (기본 파일 1개=문서 1개). 와일드카드 가능")
     ap.add_argument("--lines", action="store_true", help="로컬 파일의 비어있지 않은 줄 하나 = 문서 하나")
     ap.add_argument("--hf-dataset"); ap.add_argument("--hf-config"); ap.add_argument("--hf-data-dir")
     ap.add_argument("--split", default="train"); ap.add_argument("--text-field", default="text")
@@ -182,12 +182,9 @@ def main(argv=None):
         if a.hf_dataset:
             yield from iter_hf_texts(a.hf_dataset, a.split, a.text_field, a.hf_config, a.hf_data_dir)
             return
-        for p in a.files:
-            txt = open(p, encoding="utf-8").read()
-            if a.lines:
-                yield from (l for l in txt.split("\n") if l.strip())
-            else:
-                yield txt
+        from .data import iter_local_docs
+        for p in a.files:                       # parquet/jsonl[.gz] 는 --text-field 컬럼, txt 는 파일=문서(--lines 면 줄=문서)
+            yield from iter_local_docs(p, a.text_field, a.lines)
 
     # 재개: 이미 처리한 문서 수만큼 다시 스트리밍해서 건너뜀(토큰화는 안 함). 정확성 우선, HF 는 네트워크 비용만 든다.
     factory = lambda n: itertools.islice(raw_docs(), n, None)

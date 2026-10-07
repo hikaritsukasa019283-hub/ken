@@ -11,6 +11,7 @@ CLI:
       --src hf=HuggingFaceFW/fineweb-2 config=kor_Hang field=text weight=0.7 \\
       --src hf=HuggingFaceTB/finemath config=finemath-4plus field=text weight=0.25 \\
       --src file=extra_en.txt weight=0.05
+  로컬 파일(HF 에서 따로 받은 것): --src file=data\\kor_Hang\\*.parquet field=text weight=0.7   (.parquet/.jsonl/.jsonl.gz/.txt)
 """
 import argparse
 import json
@@ -119,10 +120,11 @@ def _parse_src(spec: str) -> dict:
                              kv.get("config"), kv.get("data_dir"))
         return {"name": kv["hf"].split("/")[-1] + (f":{kv['config']}" if kv.get("config") else ""),
                 "docs": docs, "weight": w}
-    if "file" in kv:
+    if "file" in kv:                              # txt(줄=문서) / parquet / jsonl[.gz], 와일드카드 가능
+        from .data import iter_local_docs
         path = kv["file"]
         return {"name": os.path.basename(path), "weight": w,
-                "docs": (l.rstrip("\n") for l in open(path, encoding="utf-8") if l.strip())}
+                "docs": iter_local_docs(path, kv.get("field", "text"), lines=True)}
     raise ValueError(f"hf=... 또는 file=... 필요: {spec!r}")
 
 

@@ -8,9 +8,11 @@ CLI (HuggingFace 데이터셋, 스트리밍 — 전체를 내려받지 않고 RA
   예) Anthropic/hh-rlhf:  --hf-dataset Anthropic/hh-rlhf --hf-data-dir helpful-base --text-field chosen
 """
 import argparse
+import glob
+import gzip
 import json
 import os
-from typing import Iterable, List
+from typing import Iterable, Iterator, List
 
 import numpy as np
 import torch
@@ -77,6 +79,54 @@ def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", 
         t = row.get(text_field)
         if t:
             yield t
+
+
+def expand_paths(path: str) -> List[str]:
+    """와일드카드(*, ?)는 직접 펼친다 (PowerShell 은 네이티브 명령 인자의 *를 펼치지 않음). 정렬해서 순서 고정."""
+    if any(c in path for c in "*?["):
+        found = sorted(glob.glob(path))
+        if not found:
+            raise FileNotFoundError(f"일치하는 파일 없음: {path!r} (현재 폴더: {os.getcwd()})")
+        return found
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"파일 없음: {path!r} (현재 폴더: {os.getcwd()})")
+    return [path]
+
+
+def iter_local_docs(path: str, field: str = "text", lines: bool = False) -> Iterator[str]:
+    """로컬 파일에서 문서를 yield. 브라우저/다운로드 도구로 받은 HF 데이터를 그대로 읽는 용도.
+      .parquet            : `field` 컬럼을 배치 단위로 읽음 (pyarrow, 메모리 일정)
+      .jsonl/.ndjson[.gz] : 줄마다 JSON, `field` 키
+      그 외(.txt 등)       : lines=True 면 비지 않은 줄 = 문서, 아니면 파일 전체 = 문서
+    path 에 와일드카드 가능 (예: data\\kor_Hang\\*.parquet)."""
+    for p in expand_paths(path):
+        low = p.lower()
+        if low.endswith(".parquet"):
+            try:
+                import pyarrow.parquet as pq
+            except ImportError as e:
+                raise ImportError("parquet 을 읽으려면 pip install pyarrow") from e
+            pf = pq.ParquetFile(p)
+            if field not in pf.schema_arrow.names:
+                raise KeyError(f"{p}: '{field}' 컬럼 없음. 있는 컬럼: {pf.schema_arrow.names}")
+            for batch in pf.iter_batches(batch_size=1000, columns=[field]):
+                for t in batch.column(0).to_pylist():
+                    if t:
+                        yield t
+        elif low.endswith((".jsonl", ".ndjson", ".jsonl.gz", ".ndjson.gz")):
+            op = gzip.open if low.endswith(".gz") else open
+            with op(p, "rt", encoding="utf-8") as f:
+                for ln in f:
+                    if ln.strip():
+                        t = json.loads(ln).get(field)
+                        if t:
+                            yield t
+        else:
+            txt = open(p, encoding="utf-8").read()
+            if lines:
+                yield from (l for l in txt.split("\n") if l.strip())
+            elif txt.strip():
+                yield txt
 
 
 def write_bin(docs: Iterable[str], tok, out_path: str, max_tokens: int = None) -> int:

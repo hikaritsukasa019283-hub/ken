@@ -118,3 +118,44 @@ def test_cli_local_lines(tmp_path):
     out = str(tmp_path / "cli")
     main(["--tokenizer", "byte", "--out", out, "--lines", "--min-chars", "20", "--val-frac", "0.1", str(f)])
     assert os.path.exists(out + ".train.bin") and os.path.exists(out + ".stats.json")
+
+
+def _write_parquet(path, texts, field="text"):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    pq.write_table(pa.table({field: texts, "id": list(range(len(texts)))}), path, row_group_size=50)
+
+
+def test_local_parquet_jsonl_gz_glob(tmp_path):
+    import gzip
+    pytest.importorskip("pyarrow")
+    from graphmoe.data import iter_local_docs
+    docs = mk_docs(120)
+    _write_parquet(str(tmp_path / "a-0.parquet"), docs[:100])
+    _write_parquet(str(tmp_path / "a-1.parquet"), docs[100:] + [None, ""])        # 빈 값은 건너뜀
+    got = list(iter_local_docs(str(tmp_path / "a-*.parquet")))                   # 와일드카드 + 순서 보존
+    assert got == docs
+    with gzip.open(tmp_path / "b.jsonl.gz", "wt", encoding="utf-8") as f:
+        for d in docs[:30]:
+            f.write(json.dumps({"text": d, "x": 1}, ensure_ascii=False) + "\n")
+    assert list(iter_local_docs(str(tmp_path / "b.jsonl.gz"))) == docs[:30]
+    with pytest.raises(KeyError, match="컬럼 없음"):
+        list(iter_local_docs(str(tmp_path / "a-0.parquet"), field="content"))
+    with pytest.raises(FileNotFoundError):
+        list(iter_local_docs(str(tmp_path / "zzz-*.parquet")))
+
+
+def test_cli_build_from_parquet_and_tokenizer_from_parquet(tmp_path):
+    pytest.importorskip("pyarrow")
+    from graphmoe.build import main
+    from graphmoe.tokenizer import main as tok_main
+    docs = mk_docs(150)
+    _write_parquet(str(tmp_path / "k.parquet"), docs)
+    out = str(tmp_path / "pq")
+    main(["--tokenizer", "byte", "--out", out, "--min-chars", "20", "--val-frac", "0.1",
+          str(tmp_path / "k.parquet")])
+    assert os.path.getsize(out + ".train.bin") > 0 and os.path.exists(out + ".stats.json")
+    tj = str(tmp_path / "t" / "tok.json")
+    tok_main(["train", "--out", tj, "--vocab-size", "500", "--total-chars", "20000", "--holdout", "5",
+              "--src", f"file={tmp_path / 'k.parquet'}", "field=text", "weight=1"])
+    assert os.path.exists(tj)

@@ -113,6 +113,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 설명은 **결론 먼저, 근거(수치·테스트·로그)** 순서로 보고한다.
 
 ## 8. 알려진 제약 / 발견 사항 (누적)
+- **HF 접속이 안 되는 PC(사용자 환경에서 발생)**: 데이터는 다른 경로(브라우저/다운로드 도구)로 받아 로컬 파일로 처리한다. `graphmoe.tokenizer --src file=<경로> field=text` 와 `graphmoe.build <경로> --text-field text` 가 `.parquet` / `.jsonl[.gz]` / `.txt`, 와일드카드(`*.parquet`)를 직접 읽는다(`data.iter_local_docs`, parquet 은 pyarrow 필요, 배치 단위라 RAM 일정). 파일 안의 컬럼명은 데이터셋 카드에서 확인.
 - **Windows PowerShell**: 따옴표 없는 쉼표(`a,b`)는 인자가 쪼개진다. `--src`/`--mix`/`--val-mix` 는 *공백으로 나눠 써도* 동작하게 해 둠(`--src hf=X config=Y weight=0.7`, `--mix a.bin=0.7 b.bin=0.3`). 쉼표 형식은 따옴표로 감쌀 것. 경로 구분자는 `\` 그대로 가능.
 - `get_tokenizer` 는 접두사 없는 `*.json` 도 학습 토크나이저로 인식, 파일이 없으면 현재 폴더를 포함한 에러. HF 이름 조회 실패 시 `file:` 안내.
 - **데이터 빌더**: 중복 제거는 *정확 일치*(공백 정규화 후 해시)만 한다 → 유사 중복·보일러플레이트는 train/val 사이에 남아 검증 손실이 낙관적일 수 있음. 해시 집합은 메모리에 올라감(문서당 수십 바이트) → RAM 이 부족하면 `--no-dedup`. 재개 시 HF 는 이미 처리한 문서 수만큼 *다시 스트리밍*(토큰화는 안 함, 네트워크만 소모). 품질 필터 임계값은 일반 휴리스틱이며 **실데이터로 튜닝 안 됨**(`stats.json` 의 drop 비율을 보고 조정). `--min-hangul` 은 한국어 소스에만.
