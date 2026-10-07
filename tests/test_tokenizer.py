@@ -64,3 +64,23 @@ def test_get_tokenizer_file_and_pipeline(tmp_path):
 
 def test_padded_vocab():
     assert padded_vocab(63987) == 64000 and padded_vocab(64000) == 64000 and padded_vocab(1) == 64
+
+
+def test_get_tokenizer_bare_json_and_clear_errors(tmp_path, monkeypatch):
+    import sys, types
+    import pytest
+    out = str(tmp_path / "tok.json")
+    gen, _, _ = mix_corpus(_srcs(), total_chars=30000, holdout=5)
+    train_tokenizer(gen, 500, out)
+    assert isinstance(get_tokenizer(out), TrainedTokenizer)               # 접두사 없는 .json 경로도 인식
+    assert isinstance(get_tokenizer("file:" + out), TrainedTokenizer)
+    with pytest.raises(FileNotFoundError, match="토크나이저 파일을 찾을 수 없음"):
+        get_tokenizer(str(tmp_path / "nope.json"))                        # 파일이 없으면 HF 탐색 대신 명확한 에러
+
+    class Boom:
+        @staticmethod
+        def from_pretrained(name):
+            raise OSError(f"Can't load tokenizer for '{name}'")
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(AutoTokenizer=Boom))
+    with pytest.raises(RuntimeError, match="file:"):                      # HF 실패 시 file: 안내 포함
+        get_tokenizer("hf:some/missing-model")

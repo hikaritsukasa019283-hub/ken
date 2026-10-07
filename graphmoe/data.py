@@ -45,13 +45,26 @@ class HFTokenizer:
 
 
 def get_tokenizer(spec: str):
-    """'byte' | 'file:<tokenizer.json>' (graphmoe.tokenizer 로 학습한 것) | 'hf:<name_or_path>'"""
+    """'byte' | 'file:<tokenizer.json>' (graphmoe.tokenizer 로 학습한 것) | 'hf:<name_or_path>'
+    접두사 없이 '*.json' 파일 경로만 줘도 학습한 토크나이저로 인식한다."""
     if spec == "byte":
         return ByteTokenizer()
-    if spec.startswith("file:"):
+    is_file = spec.startswith("file:") or (spec.endswith(".json") and not spec.startswith("hf:"))
+    if is_file:
+        path = spec.removeprefix("file:")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"토크나이저 파일을 찾을 수 없음: {path!r} (현재 폴더: {os.getcwd()}). "
+                "graphmoe.tokenizer train 의 --out 경로와 같은지, 같은 폴더에서 실행했는지 확인하세요.")
         from .tokenizer import TrainedTokenizer
-        return TrainedTokenizer(spec.removeprefix("file:"))
-    return HFTokenizer(spec.removeprefix("hf:"))
+        return TrainedTokenizer(path)
+    name = spec.removeprefix("hf:")
+    try:
+        return HFTokenizer(name)
+    except Exception as e:                      # 허브에서 못 찾음 / transformers 미설치 / 네트워크 차단
+        raise RuntimeError(
+            f"HF 토크나이저 {name!r} 를 불러오지 못함: {e}\n"
+            "-> 직접 학습한 토크나이저(json)라면 'file:경로.json' 으로 지정하세요.") from e
 
 
 def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", config: str = None,
