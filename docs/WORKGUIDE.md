@@ -26,7 +26,7 @@ graphmoe/
   model.py        Block = Attn + [SharedSwiGLU ∥ ExpertGraph]; GraphMoE(forward/generate/new_caches, grad_ckpt)
   budget.py       모델 생성 없이 파라미터/활성/RAM 계산 (스펙 대비 점검)   python -m graphmoe.budget
   packing.py      2/3/4-bit 실제 비트패킹, export_packed / load_packed (추론 커널의 참조 구현)
-  data.py         토크나이저 인터페이스(byte / HF), .bin 생성, BinSampler, 합성데이터
+  data.py         토크나이저 인터페이스(byte / HF), .bin 생성(로컬/HF 스트리밍), BinSampler, **MixSampler(비율 혼합)**, 합성데이터
   diagnostics.py  route_stats: tier 별 엔트로피·dead expert·ctrl on-rate·사용 경로 수
   train.py        AdamW + warmup/cosine + accum + bf16 + clip + ckpt/resume + 로깅
 tests/            test_smoke.py, test_pretrain_ready.py   (python -m pytest -q tests, ~30s CPU)
@@ -42,6 +42,7 @@ docs/WORKGUIDE.md 이 문서
 5. **budget.py 파라미터 수 == 실제 모델** (`test_param_count_matches_budget`, 7b 는 meta device 로 확인).
 6. **Router / Norm / edge_* 는 양자화하지 않고 weight decay 제외** (`train.build_param_groups`).
 7. Expert 체인: `v` 는 (domain,op), `w` 는 (domain,op,ctrl) 에 의존. ctrl 이 꺼진 토큰은 ctrl 연산을 건너뛴다.
+8. **MixSampler**: 샘플 단위로 소스를 가중치 확률로 뽑는다. 윈도우 길이가 seq_len 으로 고정이라 *샘플 비율 = 토큰 비율*. 시드 고정 시 재현 가능, `usage` 로 실제 비율 점검 (`test_mix_sampler_*`).
 
 ## 4. 실행법
 ```bash
@@ -54,6 +55,9 @@ python -m graphmoe.train --preset tiny --synthetic --steps 60 --batch 8 --seq-le
 python -m graphmoe.data --tokenizer hf:<name> --out data/train.bin corpus1.txt corpus2.txt
 python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin --seq-len 1024 \
        --batch 8 --accum 4 --bf16 --grad-ckpt --steps 20000 --save-every 1000 --eval-every 500 --out runs/mini0
+# 혼합 학습 (경로=가중치, 쉼표 구분; Windows 경로의 ':' 때문에 '=' 사용). log.jsonl 의 "mix" 로 실제 비율 확인
+python -m graphmoe.train --preset mini --mix "data/ko.bin=0.7,data/math.bin=0.25,data/en.bin=0.05" \
+       --val-mix "data/ko_val.bin=0.7,data/math_val.bin=0.25,data/en_val.bin=0.05" --seq-len 1024 --out runs/mix0
 ```
 출력 `runs/<name>/log.jsonl` 의 `*_dead`(죽은 expert), `*_entropy`(0~1, 1=균등), `paths_used` 를 반드시 확인.
 
@@ -61,7 +65,7 @@ python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin 
 | ID | 내용 | 현재 가정 |
 |---|---|---|
 | ~~D1~~ ✅ | **해결(rank 확대)**: 512/384/192 → 1728/1280/640. 계산값 총 **6.76B**(목표 6.8B, -0.6%) / 활성 **2.32B**(목표 2.4B, -3%). 원 스펙 rank 로는 총 3.03B/활성 1.83B 였음 | 적용 완료 |
-| D2 | 데이터: 사용자 선택 **`Anthropic/hh-rlhf`** (HF). ⚠ 이건 *선호(preference) 대화 데이터*(`chosen`/`rejected` 필드, `data_dir` 로 서브셋 분리 — 제 기억 기준, 이 환경은 huggingface.co 차단이라 **미검증**)라 사전학습 코퍼스로는 규모가 작다 → 파이프라인 검증·SFT/선호 단계용. 사전학습용 대규모 코퍼스는 별도 필요. 토크나이저/vocab 미정 | `data.py --hf-dataset Anthropic/hh-rlhf --hf-data-dir helpful-base --text-field chosen` 지원. vocab 64000 은 가정값 |
+| D2 | 데이터: 사용자 요구 = **한국어 + 수학 강화 사전학습**. 후보·검증 상태는 §9. (`Anthropic/hh-rlhf` 는 선호 데이터라 사전학습 부적합 → SFT/선호 단계용). 토크나이저/vocab 미정 | 혼합 샘플러 완료. 한국어 웹 70 / 수학 25 / 기타 5 로 시작(근거 없는 시작값, T13 에서 비교). vocab 64000 은 가정값 |
 | ~~D3~~ ✅ | **해결**: 사용자 PC RAM 이 작아 *작을수록 좋음*. 4.3~4.8GB 는 목표가 아니라 **상한**으로 해석. 현 계산값 ≈2.2GB (8K ctx) 로 상한 이내 → 추가 조정 불필요. 단 RAM 을 더 줄이고 싶으면 ctx 축소/KV 비트 하향 가능 | 상한 해석 적용 |
 | D4 | "Shared SwiGLU" = 모든 레이어에 각각 있는 항상-활성 FFN (레이어 간 가중치 공유 아님) | 레이어별 독립 |
 | D5 | "5:3 KV-sharing" = 8-layer 블록당 5 owner : 3 sharer | 20 owner / 12 sharer |
@@ -74,7 +78,11 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 
 | ID | 작업 | 선행 | DoD |
 |---|---|---|---|
-| T1 | 실제 토크나이저 선정 + HF 데이터셋 ID 확정 → `.bin` (스트리밍 도구는 완료, 모델 vocab 과 맞추기) | D2 | train/val bin 생성(`--hf-dataset ... --max-tokens`), `BinSampler` 로드, `cfg.vocab_size >= bin vocab` |
+| T1 | HF 데이터셋 3종(§9)을 `.bin` 으로 빌드 (스트리밍·혼합 도구는 완료. **다운로드는 사용자 PC 에서** — 클라우드는 huggingface.co 차단) | T11 | train/val bin 생성(`--hf-dataset ... --max-tokens`), `BinSampler` 로드, `cfg.vocab_size >= bin vocab` |
+| T11 | **토크나이저 학습**: 한국어+수학(LaTeX/기호) 혼합 샘플로 BPE/Unigram 학습, vocab 을 cfg.vocab_size 와 일치시킴 | - | 학습 스크립트 + 한국어/수학 텍스트의 토큰/문자 비율 리포트, `HFTokenizer` 로 로드 |
+| T12 | 한국어 수학 SFT 후보 3종의 라이선스·약관 확인(GPT-4o 합성 데이터 약관 포함) 후 후반 단계 혼합 | - | 라이선스 표 + 사용 가능 여부 결정 기록 |
+| T13 | 혼합 비율 파일럿 비교(mini): ko:math 비율별 val ppl(한국어)·수학 val loss 곡선 | T1,T11 | 비율별 로그 + 권장 비율 |
+| T14 | 데이터 빌더 보강: 소스별 train/val 분리 빌드(홀드아웃), 중복·품질 필터, 다운로드 재개 | T1 | `data.py` 에서 val bin 이 train 과 겹치지 않음을 테스트 |
 | T2 | ✅ 규모(D1)·RAM(D3) 확정 완료 (6.76B / 2.32B / 2.2GB) | - | `budget.py` + 테스트 통과 |
 | T3 | **QAT 스케줄**: FP(qat=False) 워밍업 → 4→3→2bit 점진 하향. 현재는 `cfg.qat` on/off 만 있음 | - | 스케줄 구현 + mini 에서 bit 하향 시 loss 급등 없음 로그 |
 | T4 | 라우터 안정화: z-loss, router 노이즈, aux 계수 튜닝, ctrl 게이트 임계 | - | mini 학습에서 `*_dead`=0, entropy>0.8 유지 |
@@ -102,3 +110,18 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 라우터 초기엔 dead expert 가 많다 (tiny 60 step 실험: domain dead 1.0→0.25). aux loss 가 필요하며 T4 로 개선 여지.
 - 학습 루프는 단일 디바이스 전용. 비유한(NaN/Inf) grad 스텝은 건너뛴다.
 - `Int8KVCache` 는 batch 고정·max_seq_len 사전할당. 8K 초과 문맥 미지원.
+
+## 9. 데이터 후보 조사 (한국어 + 수학, 사전학습용)
+> 출처: 웹 검색 결과(2차 자료). **huggingface.co 가 클라우드 환경에서 차단돼 원문 페이지는 직접 확인하지 못함** → 사용 전 각 데이터셋 카드에서 라이선스·필드명·설정명 재확인 필수. 표의 "미확인" 은 검색에서 못 찾은 것.
+
+| 용도 | 데이터셋 | 규모 | 라이선스 | 비고 |
+|---|---|---|---|---|
+| 한국어 웹 (1순위) | `HuggingFaceFW/fineweb-2`, 설정 `kor_Hang` | 6,087만 문서 / 486억 **단어** / 213GB | ODC-By 1.0 | 단어≠토큰. 토큰 수는 토크나이저 확정 후 측정 |
+| 한국어 웹 (대안) | CulturaX `ko` | 한국어 분량 미확인 | 미확인 (mC4/OSCAR 약관 승계로 기억 — 상업 이용 확인 필요) | |
+| 한국어 (보조) | `wikimedia/wikipedia` ko 판 | 미확인 | CC-BY-SA (기억) | 검색으로 미검증 |
+| 수학 | `nvidia/Nemotron-CC-Math-v1` | 3+ 1,330억 / 4+ 520억 토큰 | CC-BY 4.0 | 가장 큼. 영어 위주(미확인) |
+| 수학 | `HuggingFaceTB/finemath` | 3+ 340억 / 4+ 96억 토큰 | 미확인 | 소형 파일럿엔 4+ 로 충분 |
+| 수학 | `open-web-math/open-web-math` | 147억 토큰 | ODC-By 1.0 | |
+| 한국어 수학 (SFT용, 사전학습엔 소규모) | `kuotient/orca-math-korean-dpo-pairs`, `nayohan/math-gpt-4o-200k-ko`, `youjunhyeok/PersonaHub-ko`(reasoning) | 각 10만~100만 건 | 미확인 (GPT-4o 합성 → 약관 확인, T12) | 대규모 한국어 수학 *사전학습* 코퍼스는 못 찾음 |
+
+혼합 시작안(mini 파일럿): 한국어 웹 0.70 / 수학 0.25 / 영어·위키 0.05. 규모 감각: mini(0.11B) ≈ 20억 토큰(파라미터당 ~20토큰 경험칙), uint16 기준 약 4GB.

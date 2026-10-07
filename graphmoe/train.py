@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 
 from .config import GraphMoEConfig, get_preset
-from .data import BinSampler, write_synthetic_bin
+from .data import BinSampler, MixSampler, parse_mix, write_synthetic_bin
 from .diagnostics import route_stats
 from .model import GraphMoE
 
@@ -80,8 +80,14 @@ def train(a) -> dict:
         a.data = a.data or os.path.join(a.out, "synthetic.bin")
         if not os.path.exists(a.data):
             write_synthetic_bin(a.data, vocab=cfg.vocab_size)
-    train_s = BinSampler(a.data, a.seq_len, a.seed)
-    val_s = BinSampler(a.val or a.data, a.seq_len, a.seed + 1)
+    if a.mix:                                   # 여러 코퍼스를 비율로 혼합 (예: 한국어 웹/수학/영어)
+        train_s = MixSampler(parse_mix(a.mix), a.seq_len, a.seed)
+        val_s = (MixSampler(parse_mix(a.val_mix), a.seq_len, a.seed + 1) if a.val_mix
+                 else BinSampler(a.val, a.seq_len, a.seed + 1) if a.val
+                 else MixSampler(parse_mix(a.mix), a.seq_len, a.seed + 1))
+    else:
+        train_s = BinSampler(a.data, a.seq_len, a.seed)
+        val_s = BinSampler(a.val or a.data, a.seq_len, a.seed + 1)
     assert train_s.vocab_size <= cfg.vocab_size, "데이터 vocab > 모델 vocab"
 
     model = GraphMoE(cfg).to(device).train()
@@ -123,7 +129,11 @@ def train(a) -> dict:
             rec = {"step": step, "loss": tot_ce, "aux": out["aux_loss"].item(), "gnorm": gn,
                    "lr": opt.param_groups[0]["lr"], "sec": time.time() - t0,
                    **route_stats(out["routes"].detach(), cfg)}
-            print(json.dumps({k: round(v, 4) if isinstance(v, float) else v for k, v in rec.items()}))
+            if a.mix:
+                tot = sum(train_s.usage.values())
+                rec["mix"] = {k: round(v / tot, 4) for k, v in train_s.usage.items()}
+            print(json.dumps({k: round(v, 4) if isinstance(v, float) else v for k, v in rec.items()},
+                             ensure_ascii=False))
             log.write(json.dumps(rec) + "\n"); log.flush()
         if a.eval_every and step % a.eval_every == 0:
             vl, ppl = evaluate(model, val_s, a.batch, a.eval_iters, device, amp)
@@ -138,6 +148,8 @@ def parse(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--preset", default="tiny", choices=["tiny", "mini", "7b"])
     p.add_argument("--data"); p.add_argument("--val"); p.add_argument("--synthetic", action="store_true")
+    p.add_argument("--mix", help="'a.bin=0.7,b.bin=0.25,...' 혼합 학습 데이터 (--data 대신)")
+    p.add_argument("--val-mix", help="검증용 혼합 (미지정 시 --val, 그것도 없으면 --mix 재사용)")
     p.add_argument("--out", default="runs/default")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--batch", type=int, default=8)

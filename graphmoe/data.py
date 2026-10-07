@@ -96,6 +96,49 @@ class BinSampler:
         return torch.from_numpy(x).to(device), torch.from_numpy(y).to(device)
 
 
+class MixSampler:
+    """여러 .bin 을 가중치 비율로 섞어 뽑는 샘플러 (BinSampler 와 같은 인터페이스).
+
+    배치의 각 샘플마다 소스를 weights 확률로 고른 뒤 그 소스의 무작위 윈도우를 뽑는다.
+    => 배치 크기와 무관하게 기대 비율이 유지되고, 시드 고정 시 재현 가능.
+    usage[name] 에 소스별 누적 샘플 수를 기록 (실제 혼합 비율 점검용)."""
+
+    def __init__(self, sources, seq_len: int, seed: int = 0):
+        """sources: [(path, weight), ...]"""
+        assert len(sources) >= 1, "소스가 비어 있음"
+        ws = [float(w) for _, w in sources]
+        assert all(w > 0 for w in ws), "가중치는 양수여야 함"
+        self.names = [os.path.basename(p) for p, _ in sources]
+        assert len(set(self.names)) == len(self.names), "소스 파일명이 중복됨 (usage 구분 불가)"
+        self.weights = np.asarray(ws) / sum(ws)
+        # 소스별 샘플러는 독립 시드 (소스 간 상관 방지), 소스 선택용 rng 는 별도
+        self.samplers = [BinSampler(p, seq_len, seed * 1000 + i + 1) for i, (p, _) in enumerate(sources)]
+        self.vocab_size = max(sm.vocab_size for sm in self.samplers)
+        self.seq_len = seq_len
+        self.rng = np.random.default_rng(seed)
+        self.usage = {n: 0 for n in self.names}
+
+    def get_batch(self, batch: int, device="cpu"):
+        pick = self.rng.choice(len(self.samplers), size=batch, p=self.weights)
+        xs, ys = [], []
+        for i in pick:
+            x, y = self.samplers[i].get_batch(1)
+            xs.append(x); ys.append(y)
+            self.usage[self.names[i]] += 1
+        return torch.cat(xs).to(device), torch.cat(ys).to(device)
+
+
+def parse_mix(spec: str):
+    """'ko.bin=0.7,math.bin=0.25,en.bin=0.05' -> [(path, weight), ...]  (Windows 경로의 ':' 때문에 '=' 사용)"""
+    out = []
+    for item in spec.split(","):
+        path, _, w = item.strip().rpartition("=")
+        if not path:
+            raise ValueError(f"'경로=가중치' 형식이 아님: {item!r}")
+        out.append((path, float(w)))
+    return out
+
+
 def write_synthetic_bin(path: str, vocab: int = 256, n: int = 200_000, period: int = 16, seed: int = 0):
     """학습이 실제로 되는지 확인용: 주기 패턴 + 약간의 노이즈."""
     rng = np.random.default_rng(seed)

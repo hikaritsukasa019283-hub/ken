@@ -3,7 +3,7 @@ import copy
 import torch
 
 from graphmoe.config import tiny_config
-from graphmoe.data import BinSampler, ByteTokenizer, write_bin, write_synthetic_bin
+from graphmoe.data import BinSampler, ByteTokenizer, MixSampler, parse_mix, write_bin, write_synthetic_bin
 from graphmoe.diagnostics import route_stats
 from graphmoe.model import GraphMoE
 from graphmoe.packing import (dequant_entry, export_packed, load_packed, pack_bits,
@@ -108,3 +108,48 @@ def test_hf_streaming_and_max_tokens(tmp_path, monkeypatch):
     assert 1000 <= n < 1000 + 400                         # 문서 단위로 끊으므로 약간 초과 가능
     list(iter_hf_texts("Anthropic/hh-rlhf", "train", "chosen", data_dir="helpful-base"))
     assert calls["data_dir"] == "helpful-base" and calls["name"] == "Anthropic/hh-rlhf"
+
+
+def _const_bin(path, value, n=5000, vocab=256):
+    import json, numpy as np
+    np.full(n, value, dtype=np.uint16).tofile(path)
+    json.dump({"dtype": "uint16", "n_tokens": n, "vocab_size": vocab}, open(path + ".json", "w"))
+
+
+def test_mix_sampler_ratio_determinism_and_usage(tmp_path):
+    a, b = str(tmp_path / "ko.bin"), str(tmp_path / "math.bin")
+    _const_bin(a, 5); _const_bin(b, 9)
+    s = MixSampler([(a, 7), (b, 3)], seq_len=8, seed=1)                  # 가중치는 정규화됨 -> 0.7 / 0.3
+    x, y = s.get_batch(2000)
+    frac_ko = (x[:, 0] == 5).float().mean().item()
+    assert abs(frac_ko - 0.7) < 0.05, frac_ko                           # 이항분포 sd≈0.01, 5σ 여유
+    assert ((x == 5).all(1) | (x == 9).all(1)).all()                    # 한 샘플은 한 소스에서만
+    assert s.usage["ko.bin"] == int((x[:, 0] == 5).sum())               # usage 집계가 실제 개수와 정확히 일치
+    s2 = MixSampler([(a, 7), (b, 3)], seq_len=8, seed=1)
+    assert torch.equal(s2.get_batch(50)[0], MixSampler([(a, 7), (b, 3)], 8, 1).get_batch(50)[0])
+
+
+def test_mix_sampler_validation_and_parse(tmp_path):
+    import pytest
+    a = str(tmp_path / "a.bin"); _const_bin(a, 1)
+    with pytest.raises(AssertionError):
+        MixSampler([(a, 0)], 8)                                          # 가중치 0 거부
+    with pytest.raises(AssertionError):
+        MixSampler([], 8)
+    assert parse_mix("ko.bin=0.7, math.bin=0.25") == [("ko.bin", 0.7), ("math.bin", 0.25)]
+    assert parse_mix(r"C:\data\ko.bin=1") == [(r"C:\data\ko.bin", 1.0)]  # Windows 경로의 ':' 안전
+    with pytest.raises(ValueError):
+        parse_mix("ko.bin")
+
+
+def test_train_with_mix(tmp_path):
+    a, b = str(tmp_path / "a.bin"), str(tmp_path / "b.bin")
+    write_synthetic_bin(a, vocab=256, n=20000, seed=0)
+    write_synthetic_bin(b, vocab=256, n=20000, seed=1)
+    h = train(parse(["--preset", "tiny", "--mix", f"{a}=0.6,{b}=0.4", "--steps", "4", "--batch", "8",
+                     "--seq-len", "32", "--out", str(tmp_path / "run"), "--log-every", "2"]))
+    assert h["last_loss"] > 0
+    line = open(tmp_path / "run" / "log.jsonl").read().splitlines()[-1]
+    import json
+    mix = json.loads(line)["mix"]
+    assert set(mix) == {"a.bin", "b.bin"} and abs(sum(mix.values()) - 1) < 1e-3
