@@ -28,6 +28,7 @@ graphmoe/
   packing.py      2/3/4-bit 실제 비트패킹, export_packed / load_packed (추론 커널의 참조 구현)
   data.py         토크나이저 인터페이스(byte / HF), .bin 생성(로컬/HF 스트리밍), BinSampler, **MixSampler(비율 혼합)**, 합성데이터
   build.py        데이터 빌더: 품질 필터 + 정확 중복 제거 + 해시 기반 train/val 분리 + 재개(바이트 동일)
+  tools/          bundle_model.py(모델을 단일 .py 로 -> export/graphmoe_single.py), make_arch_html.py(구조도 -> docs/architecture.html)
   tokenizer.py    한국어+수학 혼합 byte-level BPE 학습/로드/점검 (`file:<json>` 로 data.py 와 연결)
   diagnostics.py  route_stats: tier 별 엔트로피·dead expert·ctrl on-rate·사용 경로 수
   train.py        AdamW + warmup/cosine + accum + bf16 + clip + ckpt/resume + 로깅
@@ -113,6 +114,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 설명은 **결론 먼저, 근거(수치·테스트·로그)** 순서로 보고한다.
 
 ## 8. 알려진 제약 / 발견 사항 (누적)
+- **산출물은 생성물**: `export/graphmoe_single.py`(모델 단일 파일)와 `docs/architecture*.html`(구조도)은 자동 생성된다. `graphmoe/` 의 모델 코드나 `config.py` 를 바꾸면 `python tools/bundle_model.py`, `python tools/make_arch_html.py` 를 다시 실행할 것(테스트가 동일성·치환 누락을 검사). 구조도의 색 5종은 `validate_palette.js` 로 라이트/다크 모두 검증됨.
 - **HF 접속이 안 되는 PC(사용자 환경에서 발생)**: 데이터는 다른 경로(브라우저/다운로드 도구)로 받아 로컬 파일로 처리한다. `graphmoe.tokenizer --src file=<경로> field=text` 와 `graphmoe.build <경로> --text-field text` 가 `.parquet` / `.jsonl[.gz]` / `.txt`, 와일드카드(`*.parquet`)를 직접 읽는다(`data.iter_local_docs`, parquet 은 pyarrow 필요, 배치 단위라 RAM 일정). 파일 안의 컬럼명은 데이터셋 카드에서 확인.
 - **Windows PowerShell**: 따옴표 없는 쉼표(`a,b`)는 인자가 쪼개진다. `--src`/`--mix`/`--val-mix` 는 *공백으로 나눠 써도* 동작하게 해 둠(`--src hf=X config=Y weight=0.7`, `--mix a.bin=0.7 b.bin=0.3`). 쉼표 형식은 따옴표로 감쌀 것. 경로 구분자는 `\` 그대로 가능.
 - `get_tokenizer` 는 접두사 없는 `*.json` 도 학습 토크나이저로 인식, 파일이 없으면 현재 폴더를 포함한 에러. HF 이름 조회 실패 시 `file:` 안내.

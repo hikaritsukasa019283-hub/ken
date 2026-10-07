@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Graph-MoE 7B 구조도</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: 왼쪽 정렬 한 단. 결론 문장 → 그림 → 읽는 법. 색은 구성요소 역할(attn/ffn/dom/op/ctl)에만 쓰고 모든 박스에 글자 라벨이 있다. */
+:root{
+  --bg:#F5F6F8; --surface:#FFFFFF; --fg:#151A22; --muted:#596270; --line:#DDE1E8; --line-strong:#7C8696;
+  --attn:#3B4FC4; --attn-t:#E9ECFB;
+  --ffn:#008A7C;  --ffn-t:#DCF1EE;
+  --dom:#7A3FC0;  --dom-t:#F0E8FA;
+  --op:#C0306A;   --op-t:#FBE7EF;
+  --ctl:#A8620A;  --ctl-t:#FBEBD3;
+  --rt:#596270;   --rt-t:#EEF0F3;
+  --io:#7C8696;   --io-t:#FFFFFF;
+  --bar:#3B4FC4;
+  --font:"Noto Sans KR",system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1318; --surface:#171C23; --fg:#E7EAF0; --muted:#9AA4B2; --line:#2A313B; --line-strong:#6E7887;
+    --attn:#7084F5; --attn-t:#1E2550;
+    --ffn:#25A99D;  --ffn-t:#0F312E;
+    --dom:#A56AE8;  --dom-t:#2B1D45;
+    --op:#E84F86;   --op-t:#46172E;
+    --ctl:#CC7C14;  --ctl-t:#3C2808;
+    --rt:#9AA4B2;   --rt-t:#1E242C;
+    --io:#6E7887;   --io-t:#171C23;
+    --bar:#7084F5;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1318; --surface:#171C23; --fg:#E7EAF0; --muted:#9AA4B2; --line:#2A313B; --line-strong:#6E7887;
+  --attn:#7084F5; --attn-t:#1E2550;
+  --ffn:#25A99D;  --ffn-t:#0F312E;
+  --dom:#A56AE8;  --dom-t:#2B1D45;
+  --op:#E84F86;   --op-t:#46172E;
+  --ctl:#CC7C14;  --ctl-t:#3C2808;
+  --rt:#9AA4B2;   --rt-t:#1E242C;
+  --io:#6E7887;   --io-t:#171C23;
+  --bar:#7084F5;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.65;margin:0}
+.wrap{max-width:1000px;margin-inline:auto;padding-inline:16px;padding-block:28px 64px}
+h1{font-size:28px;line-height:1.25;margin:0 0 10px;font-weight:700;text-wrap:balance}
+h2{font-size:20px;line-height:1.3;margin:0 0 6px;font-weight:700;text-wrap:balance}
+p{margin:0}
+.lede{max-width:64ch;color:var(--fg)}
+.facts{display:flex;flex-wrap:wrap;gap:8px 28px;margin:18px 0 0;padding:0}
+.facts div{min-width:0}
+.facts dt{font-size:12px;color:var(--muted);margin:0}
+.facts dd{margin:0;font-family:var(--mono);font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);margin-top:22px;overflow-x:auto;white-space:nowrap}
+nav.toc a{display:inline-block;padding:10px 14px 10px 0;color:var(--muted);text-decoration:none;font-size:14px}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--fg);outline:none;text-decoration:underline}
+section{margin-top:44px}
+.claim{max-width:68ch;color:var(--fg);margin-bottom:14px}
+figure{margin:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;overflow-x:auto}
+figcaption{max-width:72ch;margin-top:10px;font-size:13.5px;color:var(--muted)}
+svg{display:block;width:100%;height:auto;font-family:var(--font)}
+.n{stroke-width:1.5}
+.n-attn{fill:var(--attn-t);stroke:var(--attn)}
+.n-ffn{fill:var(--ffn-t);stroke:var(--ffn)}
+.n-dom{fill:var(--dom-t);stroke:var(--dom)}
+.n-op{fill:var(--op-t);stroke:var(--op)}
+.n-ctl{fill:var(--ctl-t);stroke:var(--ctl)}
+.n-rt{fill:var(--rt-t);stroke:var(--rt);stroke-dasharray:5 3}
+.n-io{fill:var(--io-t);stroke:var(--io)}
+.cell-s{fill:var(--surface);stroke:var(--attn);stroke-dasharray:3 2;stroke-width:1.2}
+.cell-f2{fill:var(--surface);stroke:var(--ffn);stroke-width:1.2}
+.grp{fill:none;stroke:var(--line-strong);stroke-dasharray:6 4;stroke-width:1.2}
+.fact{fill:none;stroke:var(--line);stroke-width:1}
+.t{fill:var(--fg);font-size:13px;font-weight:500}
+.h{fill:var(--fg);font-size:13px;font-weight:700}
+.s{fill:var(--muted);font-family:var(--mono);font-size:10.5px}
+.d{fill:var(--muted);font-family:var(--mono);font-size:10.5px}
+.f{fill:var(--fg);font-family:var(--mono);font-size:12px}
+.k{fill:var(--muted);font-size:11.5px}
+.idx{fill:var(--muted);font-family:var(--mono);font-size:9px}
+.cl{fill:var(--fg);font-family:var(--mono);font-size:11px;font-weight:500}
+.a{stroke:var(--line-strong);stroke-width:1.5;fill:none}
+.sel{stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:4 3;fill:none}
+.res{stroke:var(--line-strong);stroke-width:1.3;stroke-dasharray:2 4;fill:none}
+.ah{fill:var(--line-strong)}
+.plus{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.5}
+.arc{stroke:var(--attn);stroke-width:1.2;fill:none}
+.arcdot{fill:var(--attn)}
+.trk{fill:var(--line)}
+.fil-dom{fill:var(--dom)} .fil-op{fill:var(--op)} .fil-ctl{fill:var(--ctl)}
+.bar{fill:var(--bar)}
+.axis{stroke:var(--line-strong);stroke-width:1}
+.vl{fill:var(--fg);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:500}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tables{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:18px;margin-top:18px}
+.tables>div{min-width:0;overflow-x:auto}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px}
+.two>div{min-width:0}
+.chart-t{font-size:13px;font-weight:700;margin:0 0 4px}
+footer{margin-top:48px;font-size:13px;color:var(--muted);max-width:70ch}
+code{font-family:var(--mono);font-size:.92em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Graph-MoE 7B 구조도</h1>
+    <p class="lede">같은 모양의 블록 32개를 쌓은 모델이에요. 블록마다 어텐션 하나에, 공유 FFN과 Expert Graph가 나란히 붙어요. 총 6.76B 파라미터 중 토큰당 2.32B만 쓰고, 가중치와 8K KV 캐시를 합쳐 상주 메모리는 2.2GB예요.</p>
+    <dl class="facts">
+      <div><dt>레이어</dt><dd>32</dd></div>
+      <div><dt>d_model</dt><dd>2560</dd></div>
+      <div><dt>Q / KV 헤드</dt><dd>20 / 4 (GQA)</dd></div>
+      <div><dt>컨텍스트</dt><dd>8K</dd></div>
+      <div><dt>총 파라미터</dt><dd>6.76B</dd></div>
+      <div><dt>활성 / 토큰</dt><dd>2.32B</dd></div>
+      <div><dt>상주 메모리</dt><dd>2.2GB</dd></div>
+    </dl>
+    <nav class="toc" aria-label="구조도 목차">
+      <a href="#flow">전체 흐름</a><a href="#block">블록 하나</a><a href="#expert">Expert Graph</a><a href="#kv">KV 공유·비트</a><a href="#budget">파라미터·메모리</a>
+    </nav>
+  </header>
+
+  <section id="flow">
+    <h2>전체 흐름</h2>
+    <p class="claim">토큰 id는 임베딩을 거쳐 같은 구조의 블록 32개를 차례로 통과하고, 마지막에 로짓이 돼요. 블록끼리 다른 점은 K/V를 직접 만드는지, FFN에 몇 비트를 쓰는지뿐이에요.</p>
+    <figure><div class="card" id="g-flow"></div>
+      <figcaption>블록 안의 작은 칸 32개가 레이어 0~31이에요. 채워진 칸(20개)은 K/V를 직접 만들고, 점선 칸(12개)은 앞선 owner 층의 K/V를 읽어요. 칸에 마우스를 올리면 어느 층을 읽는지 보여요.</figcaption></figure>
+  </section>
+
+  <section id="block">
+    <h2>블록 하나</h2>
+    <p class="claim">블록은 어텐션을 먼저 돌리고, 그 결과를 정규화한 h를 공유 FFN과 Expert Graph에 동시에 넣어요. 두 출력과 잔차를 모두 더한 값이 다음 블록의 입력이에요.</p>
+    <figure><div class="card" id="g-block"></div>
+      <figcaption>점선은 잔차 경로예요. k_proj·v_proj는 owner 층에만 있고, sharer 층은 이 두 프로젝션 없이 owner의 int8 KV 캐시를 읽어요(그래서 파라미터도 줄어요).</figcaption></figure>
+  </section>
+
+  <section id="expert">
+    <h2>Expert Graph</h2>
+    <p class="claim">토큰마다 Domain → Operation → Control 순서로 expert를 하나씩 골라요. 앞 expert의 잠재 벡터가 뒤 expert의 입력이라서 1728 → 1280 → 640로 좁아지고, 각 단계가 자기 출력을 잔차에 더해요.</p>
+    <figure><div class="card" id="g-expert"></div>
+      <figcaption>점선 화살표는 라우터가 expert를 고르는 선택이에요. 앞 라우터의 선택(i, j)은 다음 라우터 logit에 간선 값(edge_do, edge_oc)으로 더해져요. Control은 게이트가 꺼지면 건너뛰어요(top-0). 박스 아래 막대는 rank 크기를 비교한 거예요.</figcaption></figure>
+  </section>
+
+  <section id="kv">
+    <h2>KV 공유와 비트 수</h2>
+    <p class="claim">32개 층 중 20개만 K/V를 만들고 12개는 읽기만 해요. 비트 수는 공유 FFN만 층에 따라 달라서, 앞뒤 8개 층은 3-bit, 가운데는 2-bit예요.</p>
+    <figure><div class="card" id="g-kv"></div>
+      <figcaption>8개 층이 한 묶음이고 앞 5개가 owner, 뒤 3개가 sharer예요. 곡선은 R 층이 읽는 W 층을 가리켜요. 같은 숫자 줄은 해당 가중치의 양자화 비트 수예요.</figcaption></figure>
+  </section>
+
+  <section id="budget">
+    <h2>파라미터와 메모리</h2>
+    <p class="claim">파라미터의 76%가 Expert Graph인데 토큰당 expert는 3개만 실행해서 활성은 2.32B예요. 2-bit 양자화 덕에 같은 모델이 2.2GB에 들어가요.</p>
+    <div class="two">
+      <figure><div class="card"><p class="chart-t">총 파라미터 (십억 개)</p><div id="g-params"></div></div></figure>
+      <figure><div class="card"><p class="chart-t">상주 메모리 (GB, 컨텍스트 8K)</p><div id="g-mem"></div></div></figure>
+    </div>
+    <div class="tables">
+      <div><table><thead><tr><th>항목</th><th>이 구조</th><th>목표</th></tr></thead><tbody>
+        <tr><td>총 파라미터</td><td class="num">6.76B</td><td class="num">≈ 6.8B (-0.6%)</td></tr>
+        <tr><td>활성 / 토큰</td><td class="num">2.32B</td><td class="num">≈ 2.4B (-3.2%)</td></tr>
+        <tr><td>상주 메모리</td><td class="num">2.2GB</td><td class="num">4.3~4.8GB 이하(상한)</td></tr>
+      </tbody></table></div>
+      <div><table><thead><tr><th>구성요소</th><th>비트</th><th>비고</th></tr></thead><tbody>
+        <tr><td>Expert Graph</td><td class="num">2</td><td>그룹 64 · scale fp16</td></tr>
+        <tr><td>Shared FFN</td><td class="num">3 / 2</td><td>앞뒤 8층 / 가운데 24층</td></tr>
+        <tr><td>Attention</td><td class="num">3</td><td>q·k·v·o 프로젝션</td></tr>
+        <tr><td>임베딩 · LM head</td><td class="num">4</td><td>두 가중치를 공유</td></tr>
+        <tr><td>KV 캐시</td><td class="num">int8</td><td>토큰·헤드별 absmax, fp16 scale</td></tr>
+        <tr><td>Router · Norm</td><td class="num">FP16</td><td>양자화하지 않음</td></tr>
+      </tbody></table></div>
+    </div>
+  </section>
+
+  <footer>이 페이지의 수치는 <code>graphmoe/</code>의 설정과 계산 함수(<code>budget.py</code>)에서 뽑아 그렸어요. 설정을 바꾼 뒤에는 <code>python tools/make_arch_html.py</code>로 다시 만들어요.</footer>
+</div>
+
+<script>
+(function(){
+const D = {"n_layers": 32, "d_model": 2560, "n_heads": 20, "n_kv_heads": 4, "head_dim": 128, "ffn_dim": 4096, "vocab": 64000, "ctx": 8192, "owners": [0, 1, 2, 3, 4, 4, 4, 4, 8, 9, 10, 11, 12, 12, 12, 12, 16, 17, 18, 19, 20, 20, 20, 20, 24, 25, 26, 27, 28, 28, 28, 28], "ffn_bits": [3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3], "n_owner": 20, "n_sharer": 12, "n_domain": 8, "n_op": 8, "n_ctrl": 4, "r_domain": 1728, "r_op": 1280, "r_ctrl": 640, "n_logical": 256, "n_physical": 20, "per_layer": {"dom": 106168320, "op": 43909120, "ctl": 9830400, "total": 159907840}, "params": {"attn": 471859200, "shared_ffn": 1006632960, "expert_graph": 5117050880, "router": 1723424, "embedding": 163840000, "norm": 166400}, "bytes": {"attn": 191692800.0, "shared_ffn": 314572800.0, "expert_graph": 1439170560.0, "router": 3446848, "norm": 332800, "embedding": 87040000.0}, "kv_bytes": 170393600, "total_params": 6761272864, "active": 2323174944, "total_bytes": 2206649408.0, "bits": {"graph": 2, "ffn_edge": 3, "ffn_mid": 2, "attn": 3, "embed": 4, "kv": 8, "group": 64}};
+let uid = 0;
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function wrap(w,h,label,inner,minw){
+  const id = 'ah'+(++uid);
+  return '<svg viewBox="0 0 '+w+' '+h+'" role="img" aria-label="'+esc(label)+'" style="min-width:'+(minw||Math.min(w,680))+'px">'
+    +'<defs><marker id="'+id+'" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4.5 L0,9 z" class="ah"/></marker></defs>'
+    +inner.split('__AH__').join(id)+'</svg>';
+}
+const T = (x,y,s,cls,anchor) => '<text x="'+x+'" y="'+y+'" class="'+(cls||'t')+'" text-anchor="'+(anchor||'middle')+'">'+esc(s)+'</text>';
+function box(x,y,w,h,role,title,subs){
+  subs = subs||[]; const lh=13.5, th=16, y0 = y + (h - (th + subs.length*lh))/2;
+  let o = '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="7" class="n n-'+role+'"/>'+T(x+w/2,y0+12,title,'t');
+  subs.forEach((s,i)=>{ o += T(x+w/2, y0+th+lh*(i+1)-2, s, 's'); });
+  return o;
+}
+const P = pts => 'M'+pts.map(p=>p.join(',')).join(' L');
+const arrow = (pts,cls) => '<path class="'+(cls||'a')+'" d="'+P(pts)+'" marker-end="url(#__AH__)"/>';
+const line  = (pts,cls) => '<path class="'+(cls||'a')+'" d="'+P(pts)+'"/>';
+const plus  = (cx,cy,ch) => '<circle cx="'+cx+'" cy="'+cy+'" r="11" class="plus"/>'+T(cx,cy+5,ch||'+','h');
+const M = v => (v/1e6).toFixed(1)+'M';
+
+/* ---------- 1. 전체 흐름 ---------- */
+function dFlow(){
+  let o = box(140,10,320,40,'io','입력 토큰 ids',['[B, T]']);
+  o += arrow([[300,50],[300,80]]);
+  o += box(140,80,320,58,'io','임베딩 · '+D.bits.embed+'-bit',[D.vocab+' × '+D.d_model+' · LM head 와 가중치 공유']);
+  o += arrow([[300,138],[300,172]]) + T(312,160,'[B, T, '+D.d_model+']','d','start');
+  o += '<rect x="60" y="172" width="480" height="256" rx="10" class="grp"/>';
+  o += T(76,194,'Block × '+D.n_layers+'  (레이어 0 … '+(D.n_layers-1)+')','h','start');
+  for(let i=0;i<D.n_layers;i++){
+    const own = D.owners[i]===i, x = 72+i*14.5;
+    o += '<rect x="'+x+'" y="206" width="13" height="22" rx="2.5" class="'+(own?'n n-attn':'cell-s')+'"><title>레이어 '+i+': '+(own?'K/V 직접 생성':'레이어 '+D.owners[i]+' 의 K/V 를 읽음')+'</title></rect>';
+  }
+  o += '<rect x="76" y="238" width="10" height="10" rx="2" class="n n-attn"/>'+T(92,247,'K/V 직접 생성 (owner) '+D.n_owner+'층','k','start');
+  o += '<rect x="290" y="238" width="10" height="10" rx="2" class="cell-s"/>'+T(306,247,'K/V 재사용 (sharer) '+D.n_sharer+'층','k','start');
+  o += box(80,258,440,52,'attn','① Attention  (GQA '+D.n_heads+'Q : '+D.n_kv_heads+'KV · '+D.bits.attn+'-bit)',['RoPE · int8 KV 캐시 · 출력에 잔차(+)']);
+  o += line([[300,310],[300,322]]) + line([[186,322],[414,322]]) + arrow([[186,322],[186,334]]) + arrow([[414,322],[414,334]]);
+  o += box(80,334,212,70,'ffn','② Shared SwiGLU',[D.ffn_dim+' · '+D.bits.ffn_mid+'~'+D.bits.ffn_edge+'-bit','항상 활성']);
+  o += box(308,334,212,70,'dom','② Expert Graph',[D.n_physical+' factor · '+D.bits.graph+'-bit','토큰당 3개 활성']);
+  o += T(300,420,'출력 = x + shared(h) + graph(h)','d');
+  o += arrow([[300,428],[300,456]]);
+  o += box(140,456,320,36,'io','RMSNorm (FP16)');
+  o += arrow([[300,492],[300,520]]);
+  o += box(140,520,320,52,'io','LM head · '+D.bits.embed+'-bit (임베딩과 공유)',['logits [B, T, '+D.vocab+']']);
+  o += T(556,296,'부가 출력','h','start')+T(556,314,'aux_loss  라우터 균형','k','start')+T(556,332,'routes [L,B,T,3]','d','start')+T(556,348,'라우팅 진단용','k','start');
+  return wrap(720,590,'입력 토큰이 임베딩과 블록 '+D.n_layers+'개, 정규화, LM head를 차례로 지나 로짓이 되는 전체 흐름',o);
+}
+
+/* ---------- 2. 블록 하나 ---------- */
+function dBlock(){
+  let o = box(260,8,200,40,'io','x',['[B, T, '+D.d_model+']']);
+  o += arrow([[360,48],[360,70]]) + box(260,70,200,30,'io','RMSNorm  (attn_norm)') + arrow([[360,100],[360,122]]);
+  o += '<rect x="100" y="122" width="520" height="272" rx="10" class="grp"/>'+T(116,142,'Attention (GQA)','h','start');
+  o += box(116,154,150,56,'attn','q_proj',['2560→2560 (20×128)','3-bit']);
+  o += box(276,154,136,56,'attn','k_proj · v_proj',['2560→512 ×2 (KV 4)','owner 층만']);
+  o += box(116,224,296,34,'attn','RoPE  (q, k 에 적용)');
+  o += arrow([[191,210],[191,224]]) + arrow([[344,210],[344,224]]);
+  o += box(116,270,296,56,'attn','scaled dot-product attention',['softmax(QKᵀ/√128)·V · causal · GQA 20:4']);
+  o += arrow([[264,258],[264,270]]);
+  o += box(440,224,172,102,'attn','int8 KV 캐시',['owner: 쓰기','sharer: 읽기','int8 + fp16 scale','최대 8192 토큰']);
+  o += arrow([[412,241],[440,241]]) + T(426,235,'쓰기','k') + arrow([[440,299],[412,299]]) + T(426,293,'읽기','k');
+  o += box(116,340,496,40,'attn','o_proj  2560→2560 · 3-bit');
+  o += arrow([[264,326],[264,340]]);
+  o += arrow([[360,394],[360,413]]) + plus(360,424);
+  o += arrow([[260,28],[56,28],[56,424],[349,424]],'res') + T(62,240,'잔차','k','start');
+  o += arrow([[360,435],[360,462]]) + box(260,462,200,30,'io','RMSNorm  (ffn_norm)');
+  o += line([[360,492],[360,508]]) + line([[195,508],[525,508]]) + arrow([[195,508],[195,530]]) + arrow([[525,508],[525,530]]);
+  o += box(90,530,210,84,'ffn','Shared SwiGLU',['gate_up 2560→'+(2*D.ffn_dim),'silu(g)⊙u → down '+D.ffn_dim+'→2560',D.bits.ffn_mid+'~'+D.bits.ffn_edge+'-bit · 항상 활성']);
+  o += box(420,530,210,84,'dom','Expert Graph',['라우터 3개 + expert 체인','Domain→Operation→Control',D.bits.graph+'-bit · 토큰당 3개 활성']);
+  o += line([[195,614],[195,636],[360,636]]) + line([[525,614],[525,636],[360,636]]) + arrow([[360,636],[360,641]]) + plus(360,652);
+  o += arrow([[371,424],[680,424],[680,652],[371,652]],'res') + T(686,540,'잔차','k','start');
+  o += arrow([[360,663],[360,690]]) + box(260,690,200,40,'io','x′',['[B, T, '+D.d_model+']']);
+  return wrap(720,740,'블록 하나의 구조: 어텐션 뒤에 공유 FFN과 Expert Graph가 병렬로 붙고 두 출력이 잔차에 더해진다',o);
+}
+
+/* ---------- 3. Expert Graph ---------- */
+function rank(x,y,w,r,role){
+  return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="5" rx="2.5" class="trk"/><rect x="'+x+'" y="'+y+'" width="'+(w*r/D.r_domain).toFixed(1)+'" height="5" rx="2.5" class="fil-'+role+'"/>'+T(x+w,y-5,'rank '+r,'d','end');
+}
+function dExpert(){
+  let o = box(20,8,210,40,'io','h  (RMSNorm 출력)',['[N, '+D.d_model+']  N = B·T']);
+  o += line([[20,28],[12,28],[12,480]]) + arrow([[12,120],[34,120]]) + arrow([[12,300],[34,300]]) + arrow([[12,480],[34,480]]);
+  o += box(34,70,196,100,'rt','Domain 라우터 (FP16)',['logits = W·h        ['+D.n_domain+']','softmax → top-1 → i','p_d = 선택된 확률']);
+  o += box(34,250,196,100,'rt','Operation 라우터 (FP16)',['logits = W·h + edge_do[i]','softmax → top-1 → j','p_o = 선택된 확률']);
+  o += box(34,430,196,100,'rt','Control 라우터 (FP16)',['logits = W·h + edge_oc[j]','top-1 → k  ('+D.n_ctrl+'개 중)','게이트 σ(w·h)>0.5 → ON']);
+  o += arrow([[132,170],[132,250]]) + T(142,214,'i  (edge_do[i])','d','start');
+  o += arrow([[132,350],[132,430]]) + T(142,394,'j  (edge_oc[j])','d','start');
+  o += box(262,70,330,100,'dom','Domain expert i  ('+D.n_domain+'개 · '+D.bits.graph+'-bit)',['gate_up 2560→'+(2*D.r_domain)+' (2×'+D.r_domain+')','z = silu(g) ⊙ u      [N, '+D.r_domain+']','down '+D.r_domain+'→2560  → y_d']) + rank(274,155,306,D.r_domain,'dom');
+  o += box(262,250,330,100,'op','Operation expert j  ('+D.n_op+'개 · '+D.bits.graph+'-bit)',['v = silu(mix z)   ['+D.r_domain+'→'+D.r_op+']','down '+D.r_op+'→2560  → y_o']) + rank(274,335,306,D.r_op,'op');
+  o += box(262,430,330,100,'ctl','Control expert k  ('+D.n_ctrl+'개 · '+D.bits.graph+'-bit)',['w = silu(mix v)   ['+D.r_op+'→'+D.r_ctrl+']','down '+D.r_ctrl+'→2560  → y_c','게이트 ON 인 토큰만 실행']) + rank(274,515,306,D.r_ctrl,'ctl');
+  o += arrow([[230,120],[262,120]],'sel') + arrow([[230,300],[262,300]],'sel') + arrow([[230,480],[262,480]],'sel');
+  o += arrow([[427,170],[427,250]]) + T(437,214,'z  [N, '+D.r_domain+']','d','start');
+  o += arrow([[427,350],[427,430]]) + T(437,394,'v  [N, '+D.r_op+']','d','start');
+  o += line([[592,120],[650,120]]) + line([[592,300],[650,300]]) + line([[592,480],[650,480]],'sel');
+  o += T(621,114,'y_d','d')+T(621,294,'y_o','d')+T(621,474,'y_c','d');
+  o += line([[650,120],[650,540]]) + arrow([[650,540],[650,562]]);
+  o += '<circle cx="650" cy="576" r="14" class="plus"/>'+T(650,581,'Σ','h')+T(650,612,'y  [N, '+D.d_model+']','d');
+  o += T(626,556,'출력 합산','k','end') + T(626,574,'y = p_d·y_d + p_o·y_o + g·y_c','f','end');
+  o += '<rect x="20" y="632" width="760" height="92" rx="8" class="fact"/>';
+  o += T(36,658,'논리 경로 '+D.n_domain+' × '+D.n_op+' × '+D.n_ctrl+' = '+D.n_logical+' / 레이어   ·   물리 factor '+D.n_domain+' + '+D.n_op+' + '+D.n_ctrl+' = '+D.n_physical+' / 레이어','t','start');
+  o += T(36,683,'레이어당 expert 파라미터 '+M(D.per_layer.total)+' = Domain '+M(D.per_layer.dom)+' + Operation '+M(D.per_layer.op)+' + Control '+M(D.per_layer.ctl)+'  (전부 '+D.bits.graph+'-bit)','t','start');
+  o += T(36,708,'토큰당 실제 연산: expert 3개 (Domain 1 + Operation 1 + Control 0~1), 나머지는 실행하지 않아요','t','start');
+  return wrap(800,740,'Expert Graph: 세 라우터가 Domain, Operation, Control expert를 하나씩 고르고 잠재 벡터가 좁아지며 세 출력이 합산된다',o,720);
+}
+
+/* ---------- 4. KV 공유 + 비트 지도 ---------- */
+function dKV(){
+  const X0=126, S=21.6, W=19, cx = i => X0+i*S+W/2;
+  let o = '';
+  for(let i=0;i<D.n_layers;i++) o += T(cx(i),24,i,'idx');
+  [8,16,24].forEach(i => { const x = X0+i*S-1.3; o += line([[x,14],[x,214]],'grp').replace('class="grp"','class="grp" style="stroke-dasharray:2 3"'); });
+  o += T(8,48,'KV 공유','h','start') + T(8,65,'R 은 W 를 읽음','k','start');
+  for(let i=0;i<D.n_layers;i++){
+    const own = D.owners[i]===i, x = X0+i*S;
+    o += '<rect x="'+x+'" y="34" width="'+W+'" height="24" rx="3" class="'+(own?'n n-attn':'cell-s')+'"><title>레이어 '+i+': '+(own?'K/V 직접 생성':'레이어 '+D.owners[i]+' 의 K/V 를 읽음')+'</title></rect>'+T(cx(i),50,own?'W':'R','cl');
+    if(!own){
+      const xs = cx(i), xo = cx(D.owners[i]), dx = Math.abs(xs-xo);
+      o += '<path class="arc" d="M'+xs+',60 Q'+((xs+xo)/2)+','+(60+14+dx*0.3)+' '+xo+',60"/><circle cx="'+xo+'" cy="60" r="2.6" class="arcdot"/>';
+    }
+  }
+  const row = (y,label,fn) => { let r = T(8,y+16,label,'h','start'); for(let i=0;i<D.n_layers;i++) r += fn(i,X0+i*S); return r; };
+  o += row(116,'Shared FFN',(i,x)=>{ const b=D.ffn_bits[i], hi=b===D.bits.ffn_edge; return '<rect x="'+x+'" y="116" width="'+W+'" height="24" rx="3" class="'+(hi?'n n-ffn':'cell-f2')+'"><title>레이어 '+i+' 공유 FFN '+b+'-bit</title></rect>'+T(cx(i),132,b,'cl'); });
+  o += row(148,'Expert Graph',(i,x)=>'<rect x="'+x+'" y="148" width="'+W+'" height="24" rx="3" class="n n-dom"/>'+T(cx(i),164,D.bits.graph,'cl'));
+  o += row(180,'Attention',(i,x)=>'<rect x="'+x+'" y="180" width="'+W+'" height="24" rx="3" class="n n-attn"/>'+T(cx(i),196,D.bits.attn,'cl'));
+  o += T(8,236,'임베딩 · LM head '+D.bits.embed+'-bit  /  Router · Norm FP16  /  KV 캐시 int'+D.bits.kv+'  (모든 레이어 공통)','k','start');
+  o += T(8,258,'W = K/V 직접 생성해 캐시에 씀 (owner) · R = owner 캐시를 읽음 (sharer) · 숫자 = 가중치 비트 수 · 점선 = 8층 묶음 (5 W : 3 R)','k','start');
+  return wrap(820,272,'레이어 '+D.n_layers+'개의 KV owner와 sharer 배치, 그리고 구성요소별 양자화 비트 수',o,760);
+}
+
+/* ---------- 5. 막대 차트 ---------- */
+function bars(rows,unit,digits,label){
+  const L=112, MAXW=270, H=34, max = Math.max.apply(null,rows.map(r=>r[1])), tot = rows.reduce((a,r)=>a+r[1],0);
+  let o = '<line x1="'+L+'" y1="2" x2="'+L+'" y2="'+(rows.length*H+2)+'" class="axis"/>';
+  rows.forEach((r,i)=>{
+    const y = 8+i*H, w = Math.max(2, MAXW*r[1]/max);
+    o += T(L-10,y+14,r[0],'t','end');
+    o += '<rect x="'+L+'" y="'+y+'" width="'+w.toFixed(1)+'" height="20" rx="3" class="bar"><title>'+r[0]+': '+r[1].toFixed(digits)+unit+' ('+(100*r[1]/tot).toFixed(1)+'%)</title></rect>';
+    o += T(L+w+8,y+15,r[1].toFixed(digits)+unit,'vl','start');
+  });
+  return wrap(480,rows.length*H+10,label,o,300);
+}
+function dParams(){
+  const p = D.params;
+  return bars([['Expert Graph',p.expert_graph/1e9],['Shared FFN',p.shared_ffn/1e9],['Attention',p.attn/1e9],['임베딩',p.embedding/1e9],['Router · Norm',(p.router+p.norm)/1e9]],'B',3,'구성요소별 총 파라미터(십억 개). Expert Graph '+(p.expert_graph/1e9).toFixed(2)+'B가 가장 크다');
+}
+function dMem(){
+  const b = D.bytes;
+  return bars([['Expert Graph',b.expert_graph/1e9],['Shared FFN',b.shared_ffn/1e9],['Attention',b.attn/1e9],['KV 캐시 (8K)',D.kv_bytes/1e9],['임베딩',b.embedding/1e9],['Router · Norm',(b.router+b.norm)/1e9]],'GB',3,'구성요소별 상주 메모리(GB). 합계 '+(D.total_bytes/1e9).toFixed(2)+'GB');
+}
+
+const mount = (id,fn) => { const el = document.getElementById(id); if(el) el.innerHTML = fn(); };
+mount('g-flow',dFlow); mount('g-block',dBlock); mount('g-expert',dExpert); mount('g-kv',dKV); mount('g-params',dParams); mount('g-mem',dMem);
+})();
+</script>
+</body>
+</html>
