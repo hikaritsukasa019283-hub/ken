@@ -26,12 +26,13 @@ class GraphMoEConfig:
     ffn_dim: int = 4096
 
     # --- per-layer expert graph (tier 별 expert 수 / rank) ---
+    # rank: 원 스펙(512/384/192)은 총 3.0B 밖에 안 나와 D1 결정으로 확대 (WORKGUIDE §5). 총 6.76B / 활성 2.32B
     n_domain: int = 8
-    r_domain: int = 512
+    r_domain: int = 1728
     n_op: int = 8
-    r_op: int = 384
+    r_op: int = 1280
     n_ctrl: int = 4
-    r_ctrl: int = 192
+    r_ctrl: int = 640
 
     # --- quantization bits ---
     bits_graph: int = 2                # expert factors (Graph QAT)

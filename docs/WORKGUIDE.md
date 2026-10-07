@@ -5,13 +5,13 @@
 
 ## 0. 한 줄 요약
 스펙(아래 §1) 기반 Graph-MoE 의 **PyTorch 뼈대 + 학습 전 인프라가 완성**됐다. 아직 **본 학습은 하지 않았고**,
-스펙 숫자 불일치(§5 D1) 때문에 7B 규모 학습 전에 **사용자 결정이 필요**하다.
+D1(숫자 불일치)은 rank 확대로 해결했고, 남은 결정은 §5 D2·D3.
 
 ## 1. 아키텍처 스펙 (원본, 변경 금지 — 바꾸려면 §5 에 결정으로 기록)
 - 32 layers, d_model 2560, 20 Q heads / 4 KV heads (GQA), head_dim 128
 - KV 공유 5:3 (8-layer 블록 중 5개가 K/V 생성, 3개는 재사용) + **8-bit KV cache**
 - Shared SwiGLU 4096 (모든 레이어, 항상 활성)
-- Per-layer Expert Graph: Domain 8×rank512 / Operation 8×rank384 / Control 4×rank192
+- Per-layer Expert Graph: Domain 8×rank**1728** / Operation 8×rank**1280** / Control 4×rank**640**  (원 스펙 512/384/192 → D1 결정으로 확대)
 - Router: Domain top-1, Operation top-1, Control top-0/1 → 논리 경로 256/layer, 물리 factor 20/layer
 - 양자화: Graph 2-bit QAT, Shared FFN 2~3-bit, Attention 3-bit, Embedding 4-bit, Router/Norm FP16
 - Default context 8K. 목표: ≈6.8B 물리, ≈2.4B 활성/token, 상주 RAM ≈4.3~4.8GB
@@ -60,14 +60,14 @@ python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin 
 ## 5. 열린 결정사항 (사용자 결정 필요 — 에이전트가 임의로 정하지 말 것)
 | ID | 내용 | 현재 가정 |
 |---|---|---|
-| **D1** | **스펙 숫자 불일치**: 이 구조의 계산값은 총 **3.03B**/활성 **1.83B**/RAM **1.16GB** (목표 6.8B/2.4B/4.3~4.8GB). expert 가 저랭크라 레이어당 43M 뿐. 해결안: (a) rank 확대 (b) expert 수 확대 (c) expert 를 full-rank 로 (d) 목표 숫자를 현실값으로 수정 | 스펙 구조 그대로 구현, 숫자는 불일치 상태 |
+| ~~D1~~ ✅ | **해결(rank 확대)**: 512/384/192 → 1728/1280/640. 계산값 총 **6.76B**(목표 6.8B, -0.6%) / 활성 **2.32B**(목표 2.4B, -3%). 원 스펙 rank 로는 총 3.03B/활성 1.83B 였음 | 적용 완료 |
 | D2 | vocab 크기 / 토크나이저 / 학습 코퍼스 | vocab 64000, 토크나이저 미정(byte 는 테스트용) |
-| D3 | RAM 4.3~4.8GB 의 정의 (런타임 버퍼·활성·패딩 포함 여부) | 가중치+KV(8K)만 계산 |
+| D3 | RAM 4.3~4.8GB 의 정의. rank 확대 후 계산값은 **≈2.2GB**(가중치 2~4bit+KV 8K)로 여전히 목표 미달. 런타임 버퍼·활성·패딩 포함 여부, 또는 비트수 상향(예: expert 3bit) 필요 여부 결정 | 가중치+KV(8K)만 계산 |
 | D4 | "Shared SwiGLU" = 모든 레이어에 각각 있는 항상-활성 FFN (레이어 간 가중치 공유 아님) | 레이어별 독립 |
 | D5 | "5:3 KV-sharing" = 8-layer 블록당 5 owner : 3 sharer | 20 owner / 12 sharer |
 | D6 | Expert 합성 방식(§3-7 의 체인 + tier 별 up-proj 잔차 기여) | 이 방식 |
 
-D1 이 풀리면 `config.py` 의 rank/expert 수만 바꾸면 되도록 짜여 있다 (`budget.py` 로 즉시 재계산).
+rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재계산된다.
 
 ## 6. 작업 보드 (다음 단계)
 상태: ☐ 미착수. 각 항목은 독립 작업 가능. 완료 조건(DoD)을 만족해야 완료.
@@ -75,7 +75,7 @@ D1 이 풀리면 `config.py` 의 rank/expert 수만 바꾸면 되도록 짜여 �
 | ID | 작업 | 선행 | DoD |
 |---|---|---|---|
 | T1 | 실제 토크나이저 + 코퍼스 준비 → `.bin` | D2 | `data.py` 로 train/val bin 생성, `BinSampler` 로 로드 테스트 |
-| T2 | 규모 확정(D1 반영) 및 `budget.py` 재검증 | D1,D3 | 목표 숫자와 ±5% 이내 or 사용자가 승인한 대체 숫자, 테스트 통과 |
+| T2 | RAM 목표(D3) 확정 및 `budget.py` 재검증 | D3 | 목표 숫자와 ±5% 이내 or 사용자가 승인한 대체 숫자, 테스트 통과 |
 | T3 | **QAT 스케줄**: FP(qat=False) 워밍업 → 4→3→2bit 점진 하향. 현재는 `cfg.qat` on/off 만 있음 | - | 스케줄 구현 + mini 에서 bit 하향 시 loss 급등 없음 로그 |
 | T4 | 라우터 안정화: z-loss, router 노이즈, aux 계수 튜닝, ctrl 게이트 임계 | - | mini 학습에서 `*_dead`=0, entropy>0.8 유지 |
 | T5 | mini(0.11B) 실데이터 파일럿 학습 + val ppl 곡선 | T1 | 재현 가능한 로그/체크포인트, 라우터 진단 리포트 |
