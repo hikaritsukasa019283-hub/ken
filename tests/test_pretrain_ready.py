@@ -88,3 +88,21 @@ def test_training_reduces_loss_and_resumes(tmp_path):
                    "--seq-len", "32", "--out", out, "--resume", "--log-every", "5"])
     h2 = train(args2)                                     # step 60 에서 이어서 10 스텝
     assert h2["first_loss"] < h["first_loss"]
+
+
+def test_hf_streaming_and_max_tokens(tmp_path, monkeypatch):
+    import sys, types
+    from graphmoe.data import iter_hf_texts
+    calls = {}
+
+    def fake_load(name, config, split, streaming):
+        calls.update(name=name, split=split, streaming=streaming)
+        return iter([{"text": "abc " * 50}, {"text": ""}, {"other": "x"}] + [{"text": "hello " * 50}] * 100)
+
+    monkeypatch.setitem(sys.modules, "datasets", types.SimpleNamespace(load_dataset=fake_load))
+    texts = list(iter_hf_texts("org/ds", "train", "text"))
+    assert calls == {"name": "org/ds", "split": "train", "streaming": True}
+    assert len(texts) == 101                              # 빈 text / 필드 없는 행은 건너뜀
+    p = str(tmp_path / "hf.bin")
+    n = write_bin(iter_hf_texts("org/ds"), ByteTokenizer(), p, max_tokens=1000)
+    assert 1000 <= n < 1000 + 400                         # 문서 단위로 끊으므로 약간 초과 가능

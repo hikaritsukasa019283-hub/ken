@@ -61,8 +61,8 @@ python -m graphmoe.train --preset mini --data data/train.bin --val data/val.bin 
 | ID | 내용 | 현재 가정 |
 |---|---|---|
 | ~~D1~~ ✅ | **해결(rank 확대)**: 512/384/192 → 1728/1280/640. 계산값 총 **6.76B**(목표 6.8B, -0.6%) / 활성 **2.32B**(목표 2.4B, -3%). 원 스펙 rank 로는 총 3.03B/활성 1.83B 였음 | 적용 완료 |
-| D2 | vocab 크기 / 토크나이저 / 학습 코퍼스 | vocab 64000, 토크나이저 미정(byte 는 테스트용) |
-| D3 | RAM 4.3~4.8GB 의 정의. rank 확대 후 계산값은 **≈2.2GB**(가중치 2~4bit+KV 8K)로 여전히 목표 미달. 런타임 버퍼·활성·패딩 포함 여부, 또는 비트수 상향(예: expert 3bit) 필요 여부 결정 | 가중치+KV(8K)만 계산 |
+| D2 | 데이터: **HuggingFace 공개 데이터셋 사용**(사용자 언급: HF / Apple 쪽 공개 DB — 정확한 데이터셋 ID 미정). 토크나이저·vocab 미정 | `data.py --hf-dataset` 스트리밍 지원 완료. vocab 64000 은 가정값 |
+| ~~D3~~ ✅ | **해결**: 사용자 PC RAM 이 작아 *작을수록 좋음*. 4.3~4.8GB 는 목표가 아니라 **상한**으로 해석. 현 계산값 ≈2.2GB (8K ctx) 로 상한 이내 → 추가 조정 불필요. 단 RAM 을 더 줄이고 싶으면 ctx 축소/KV 비트 하향 가능 | 상한 해석 적용 |
 | D4 | "Shared SwiGLU" = 모든 레이어에 각각 있는 항상-활성 FFN (레이어 간 가중치 공유 아님) | 레이어별 독립 |
 | D5 | "5:3 KV-sharing" = 8-layer 블록당 5 owner : 3 sharer | 20 owner / 12 sharer |
 | D6 | Expert 합성 방식(§3-7 의 체인 + tier 별 up-proj 잔차 기여) | 이 방식 |
@@ -74,8 +74,8 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 
 | ID | 작업 | 선행 | DoD |
 |---|---|---|---|
-| T1 | 실제 토크나이저 + 코퍼스 준비 → `.bin` | D2 | `data.py` 로 train/val bin 생성, `BinSampler` 로 로드 테스트 |
-| T2 | RAM 목표(D3) 확정 및 `budget.py` 재검증 | D3 | 목표 숫자와 ±5% 이내 or 사용자가 승인한 대체 숫자, 테스트 통과 |
+| T1 | 실제 토크나이저 선정 + HF 데이터셋 ID 확정 → `.bin` (스트리밍 도구는 완료, 모델 vocab 과 맞추기) | D2 | train/val bin 생성(`--hf-dataset ... --max-tokens`), `BinSampler` 로드, `cfg.vocab_size >= bin vocab` |
+| T2 | ✅ 규모(D1)·RAM(D3) 확정 완료 (6.76B / 2.32B / 2.2GB) | - | `budget.py` + 테스트 통과 |
 | T3 | **QAT 스케줄**: FP(qat=False) 워밍업 → 4→3→2bit 점진 하향. 현재는 `cfg.qat` on/off 만 있음 | - | 스케줄 구현 + mini 에서 bit 하향 시 loss 급등 없음 로그 |
 | T4 | 라우터 안정화: z-loss, router 노이즈, aux 계수 튜닝, ctrl 게이트 임계 | - | mini 학습에서 `*_dead`=0, entropy>0.8 유지 |
 | T5 | mini(0.11B) 실데이터 파일럿 학습 + val ppl 곡선 | T1 | 재현 가능한 로그/체크포인트, 라우터 진단 리포트 |
@@ -94,6 +94,7 @@ rank/expert 수는 `config.py` 만 바꾸면 되고 `budget.py` 로 즉시 재�
 - 설명은 **결론 먼저, 근거(수치·테스트·로그)** 순서로 보고한다.
 
 ## 8. 알려진 제약 / 발견 사항 (누적)
+- **학습 메모리 ≠ 추론 메모리**: 추론 RAM 은 2.2GB 지만, 6.76B 학습은 파라미터×(fp32 가중치 4 + grad 4 + Adam 8) = 16B/param ≈ **108GB + activation** 이 필요하다. 사용자 로컬 PC 에서 7b 학습은 불가 → 로컬은 `mini`(0.11B ≈ 1.8GB + activation) 로 파이프라인 검증, 7b 는 클라우드 GPU(다중) 필요 (T6).
 - 풀사이즈 7B 는 CPU 에서 인스턴스화하지 말 것 (`torch.device("meta")` 로 구조만 확인). 실제 forward 검증은 tiny/mini.
 - STE 형태 `w + (q-w).detach()` 는 값이 q 와 ulp 단위로 다를 수 있다 (테스트에서 round 후 비교).
 - `grad_ckpt` 는 sharer 가 owner K/V 를 클로저로 읽기 때문에 owner→sharer 구간 activation 이 일부 유지된다 (메모리 절감 일부 제한).

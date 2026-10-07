@@ -1,6 +1,10 @@
 """토크나이저 인터페이스 + 토큰 .bin(memmap) 생성/샘플링.
 
-CLI:  python -m graphmoe.data --tokenizer byte|hf:<name_or_path> --out data/train.bin  file1.txt file2.txt ...
+CLI (로컬 텍스트):
+  python -m graphmoe.data --tokenizer byte|hf:<name_or_path> --out data/train.bin  file1.txt file2.txt ...
+CLI (HuggingFace 데이터셋, 스트리밍 — 전체를 내려받지 않고 RAM/디스크 최소로 필요한 만큼만):
+  python -m graphmoe.data --tokenizer hf:<tok> --hf-dataset <org/name> [--hf-config c] --split train \
+        --text-field text --max-tokens 200000000 --out data/train.bin
 """
 import argparse
 import json
@@ -43,8 +47,19 @@ def get_tokenizer(spec: str):
     return ByteTokenizer() if spec == "byte" else HFTokenizer(spec.removeprefix("hf:"))
 
 
-def write_bin(docs: Iterable[str], tok, out_path: str) -> int:
-    """문서들을 eos 로 이어 붙여 flat 토큰 .bin + .json(meta) 저장. 토큰 수 반환."""
+def iter_hf_texts(dataset: str, split: str = "train", text_field: str = "text", config: str = None):
+    """HF 데이터셋을 streaming 으로 순회하며 text 만 yield (datasets lazy import)."""
+    from datasets import load_dataset
+    ds = load_dataset(dataset, config, split=split, streaming=True)
+    for row in ds:
+        t = row.get(text_field)
+        if t:
+            yield t
+
+
+def write_bin(docs: Iterable[str], tok, out_path: str, max_tokens: int = None) -> int:
+    """문서들을 eos 로 이어 붙여 flat 토큰 .bin + .json(meta) 저장. 토큰 수 반환.
+    max_tokens 에 도달하면 중단 (스트리밍 데이터셋용)."""
     dtype = np.uint16 if tok.vocab_size < 2 ** 16 else np.uint32
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     n = 0
@@ -53,6 +68,8 @@ def write_bin(docs: Iterable[str], tok, out_path: str) -> int:
             ids = np.asarray(tok.encode(d) + [tok.eos_id], dtype=dtype)
             f.write(ids.tobytes())
             n += len(ids)
+            if max_tokens and n >= max_tokens:
+                break
     with open(out_path + ".json", "w") as f:
         json.dump({"dtype": np.dtype(dtype).name, "n_tokens": n, "vocab_size": tok.vocab_size}, f)
     return n
@@ -92,8 +109,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tokenizer", default="byte")
     ap.add_argument("--out", required=True)
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--hf-dataset"); ap.add_argument("--hf-config")
+    ap.add_argument("--split", default="train"); ap.add_argument("--text-field", default="text")
+    ap.add_argument("--max-tokens", type=int)
     a = ap.parse_args()
+    if bool(a.hf_dataset) == bool(a.files):
+        ap.error("텍스트 파일들 또는 --hf-dataset 중 하나만 지정")
     tok = get_tokenizer(a.tokenizer)
-    n = write_bin((open(p, encoding="utf-8").read() for p in a.files), tok, a.out)
+    docs = (iter_hf_texts(a.hf_dataset, a.split, a.text_field, a.hf_config) if a.hf_dataset
+            else (open(p, encoding="utf-8").read() for p in a.files))
+    n = write_bin(docs, tok, a.out, a.max_tokens)
     print(f"wrote {n:,} tokens -> {a.out}")
